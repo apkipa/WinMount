@@ -1,0 +1,23 @@
+[package]
+name = "WinMountCore"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.72"
+clap = "4.3.12"
+ctrlc = "3.4.0"
+dokan = "0.3.1"
+dokan-sys = "0.3.1"
+# widestring = "0.4.3"
+widestring = "1.0.2"
+winapi = { version = "0.3.9", features = ["ws2def"] }
+uuid = { version = "1.4.1", features = ["v4", "fast-rng", "macro-diagnostics"] }
+thiserror = "1.0.43"
+either = "1.8.1"
+bitflags = "2.3.3"
+atomic-wait = "1.1.0"
+log = "0.4.19"
+flexi_logger = "0.25.5"

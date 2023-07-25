@@ -1,0 +1,10 @@
+# Build results
+Output/
+
+# Visual Studio
+.vs/
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates

@@ -1,0 +1,27 @@
+﻿<w32x:Window
+    x:Class="WinMount.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:WinMount.App"
+    xmlns:w32x="using:Win32Xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="Xaml Islands C++ Sample">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="40"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <Grid x:Name="TitleBarContainer">
+            <Grid x:Name="TopRectangle" Background="Red" CornerRadius="0" Grid.Row="0"/>
+            <AutoSuggestBox QueryIcon="Find" PlaceholderText="Search" HorizontalAlignment="Center" Width="260" Height="32"/>
+        </Grid>
+        <StackPanel Grid.Row="1" Orientation="Vertical" HorizontalAlignment="Center" VerticalAlignment="Center">
+            <TextBlock x:Name="ContentText" Text="Hello, Xaml Islands!" FontSize="40" Padding="0,0,0,20"/>
+            <Button HorizontalAlignment="Center" x:Name="Button" Click="ClickHandler">Open a new window</Button>
+            <Button HorizontalAlignment="Center" Margin="0,8,0,0" Click="EnableCustomTitleBarButton_Clicked">Switch custom title bar</Button>
+        </StackPanel>
+    </Grid>
+</w32x:Window>

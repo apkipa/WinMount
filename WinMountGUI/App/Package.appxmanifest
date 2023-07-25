@@ -1,0 +1,25 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10" xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest" xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10" IgnorableNamespaces="uap mp">
+  <Identity Name="7699c329-f18a-4157-a0b5-2e058bdcaeab" Publisher="CN=You" Version="1.0.0.0"/>
+  <Properties>
+    <DisplayName>WinMount.App</DisplayName>
+    <PublisherDisplayName>You</PublisherDisplayName>
+    <Logo>dummy.png</Logo>
+  </Properties>
+  <mp:PhoneIdentity PhoneProductId="7699c329-f18a-4157-a0b5-2e058bdcaeab" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.17763.0" MaxVersionTested="10.0.19041.0"/>
+  </Dependencies>
+  <Resources>
+    <Resource Language="x-generate"/>
+  </Resources>
+  <Applications>
+    <Application Id="App" Executable="dummy.exe" EntryPoint="WinMount.App.App">
+      <uap:VisualElements DisplayName="WinMount.App"
+                          Square150x150Logo="dummy.png" Square44x44Logo="dummy.png"
+                          Description="App"
+                          BackgroundColor="transparent">
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+</Package>

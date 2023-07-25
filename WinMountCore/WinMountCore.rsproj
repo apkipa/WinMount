@@ -1,0 +1,24 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Compile Include="src\**\*.rs"/>
+  </ItemGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'">
+    <BuildCommand>cargo build</BuildCommand>
+    <OutputFilePath>target\debug\WinMountCore.exe</OutputFilePath>
+    <DestinationFolder>..\Output\x64\$(Configuration)</DestinationFolder>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Release'">
+    <BuildCommand>cargo build --release</BuildCommand>
+    <OutputFilePath>target\release\WinMountCore.exe</OutputFilePath>
+    <DestinationFolder>..\Output\x64\$(Configuration)</DestinationFolder>
+  </PropertyGroup>
+  <ItemGroup>
+    <OutputFileGroup Include="$(OutputFilePath)"/>
+  </ItemGroup>
+  <Target Name="Build" Inputs="@(Compile);cargo.toml;cargo.lock" Outputs="@(OutputFileGroup)">
+    <Exec Command="$(BuildCommand)" EnvironmentVariables=""/>
+  </Target> 
+  <Target Name="CopyFiles" AfterTargets="Build">
+    <Copy SourceFiles="@(OutputFileGroup)" DestinationFolder="$(DestinationFolder)" SkipUnchangedFiles="true"/>
+  </Target>
+</Project>

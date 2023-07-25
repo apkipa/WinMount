@@ -1,0 +1,59 @@
+// Win32Xaml: A wrapper to simplify XAML content authoring and consuming on top of Win32
+namespace Win32Xaml {
+    runtimeclass AppService {
+        // Whether to quit after all windows are closed
+        static Boolean AutoQuit;
+        // Requests to exit the application
+        static void Exit();
+        // Transfers control to Win32Xaml and starts processing events
+        static void RunLoop();
+    };
+
+    // NOTE: No effect when ExtendsContentIntoTitleBar = false
+    runtimeclass WindowTitleBar {
+        //Windows.Foundation.IReference<Windows.UI.Color> BackgroundColor;
+        //Windows.Foundation.IReference<Windows.UI.Color> ForegroundColor;
+        //Windows.Foundation.IReference<Windows.UI.Color> InactiveBackgroundColor;
+        //Windows.Foundation.IReference<Windows.UI.Color> InactiveForegroundColor;
+        Windows.Foundation.IReference<Windows.UI.Color> ButtonBackgroundColor;
+        Windows.Foundation.IReference<Windows.UI.Color> ButtonForegroundColor;
+        Windows.Foundation.IReference<Windows.UI.Color> ButtonHoverBackgroundColor;
+        Windows.Foundation.IReference<Windows.UI.Color> ButtonHoverForegroundColor;
+        Windows.Foundation.IReference<Windows.UI.Color> ButtonPressedBackgroundColor;
+        Windows.Foundation.IReference<Windows.UI.Color> ButtonPressedForegroundColor;
+        Windows.Foundation.IReference<Windows.UI.Color> ButtonInactiveBackgroundColor;
+        Windows.Foundation.IReference<Windows.UI.Color> ButtonInactiveForegroundColor;
+
+        //Double Height;
+        //Double LeftInset;
+        //Double RightInset;
+    };
+
+    [contentproperty("Content")]
+    unsealed runtimeclass Window : Windows.Foundation.IClosable {
+        Window();
+
+        void Activate();
+        void SetTitleBar(Windows.UI.Xaml.UIElement element);
+
+        // NOTE: Window.Current is unsupported
+        Boolean IsMain{ get; };
+        String Title;
+        Windows.UI.Xaml.UIElement Content;
+        Boolean ExtendsContentIntoTitleBar;
+        Boolean UseTransparentBackground;
+        WindowTitleBar TitleBar{ get; };
+
+        // TODO: Add Closing & Closed event
+
+        event Windows.Foundation.TypedEventHandler<Window, Object> Closed;
+    };
+
+    runtimeclass ShellIcon {
+        ShellIcon();
+
+        Boolean IsActive;
+        Windows.Graphics.Imaging.SoftwareBitmap IconImage;
+        Windows.UI.Xaml.Controls.MenuFlyout ContextFlyout;
+    };
+}

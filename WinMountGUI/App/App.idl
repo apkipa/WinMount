@@ -1,0 +1,8 @@
+import "Win32Xaml.idl";
+
+namespace WinMount.App {
+    [default_interface]
+    runtimeclass App : Windows.UI.Xaml.Application {
+        App();
+    };
+}
