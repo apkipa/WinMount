@@ -11,13 +11,7 @@ use widestring::{U16CStr, U16CString};
 
 use super::{FileCreateDisposition, FileSystemError, FileSystemHandler};
 
-// struct ObjectEntry {
-//     attributes: super::FileAttributes,
-//     creation_time: SystemTime,
-//     last_access_time: SystemTime,
-//     last_write_time: SystemTime,
-//     entry: Entry,
-// }
+// TODO: Add option to use AWE for allocating non-paged memory
 
 #[derive(Debug, Clone, Copy)]
 struct FileStat {
@@ -285,15 +279,6 @@ struct MemFsFile<'h> {
     delete_on_close: bool,
 }
 
-// enum ObjectFromPathParentDir<'h> {
-//     Root(std::sync::RwLockReadGuard<FolderEntry>>),
-//     Node(Arc<RwLock<ObjectEntry>>, &'h FolderEntry),
-// }
-
-// impl ObjectFromPathParentDir {
-//     fn get_
-// }
-
 impl MemFsHandler {
     fn resolve_path<'s>(
         &self,
@@ -432,7 +417,7 @@ impl FileSystemHandler for MemFsHandler {
                                 e.insert(entry).clone()
                             }
                         };
-                    },
+                    }
                     _ => return Err(FileSystemError::ObjectNameNotFound),
                 }
             }
@@ -650,9 +635,18 @@ impl super::File for MemFsFile<'_> {
     fn set_delete(&self, delete_on_close: bool) -> super::FileSystemResult<()> {
         log::trace!("Set delete: {delete_on_close}");
         // TODO: Use correct NTFS delete semantics
-        self.obj.modify_stat(|stat| {
-            stat.delete_on_close = delete_on_close;
-        });
+        match &self.obj {
+            Entry::File(f) => {
+                f.write().unwrap().stat.delete_on_close = delete_on_close;
+            },
+            Entry::Folder(f) => {
+                let mut f = f.write().unwrap();
+                if delete_on_close && !f.children.is_empty() {
+                    return Err(FileSystemError::DirectoryNotEmpty);
+                }
+                f.stat.delete_on_close = delete_on_close;
+            }
+        }
         // self.delete_on_close = delete_on_close;
         Ok(())
     }
@@ -668,42 +662,57 @@ impl super::File for MemFsFile<'_> {
 
         let (parent, filename) = self.fs_handler.resolve_path(new_path)?;
         if let Some(new_parent) = parent {
-            // TODO: Improve logic
-            let (child_ptr, old_parent) = match &self.obj {
-                Entry::Folder(f) => {
-                    (Arc::as_ptr(f) as _, f.read().unwrap().parent.upgrade().ok_or(FileSystemError::AccessDenied)?)
-                },
-                Entry::File(f) => {
-                    (Arc::as_ptr(f) as _, f.read().unwrap().parent.upgrade().ok_or(FileSystemError::AccessDenied)?)
-                },
+            let handle_fn = |child_ptr, old_parent| {
+                if Arc::ptr_eq(&old_parent, &new_parent) {
+                    // Movement inside the same folder
+                    let mut parent = new_parent.write().unwrap();
+                    if !replace_if_exists
+                        && parent.children.contains_key(CaselessStr::new(filename))
+                    {
+                        return Err(FileSystemError::ObjectNameCollision);
+                    }
+                    let entry = self
+                        .remove_from_parent(child_ptr, &mut parent)
+                        .ok_or(FileSystemError::AccessDenied)?;
+                    parent.children.insert(filename.into(), entry);
+                } else {
+                    // Movement between different folders
+                    let mut old_parent = old_parent.write().unwrap();
+                    let mut new_parent = new_parent.write().unwrap();
+                    if !replace_if_exists
+                        && new_parent.children.contains_key(CaselessStr::new(filename))
+                    {
+                        return Err(FileSystemError::ObjectNameCollision);
+                    }
+                    let entry = self
+                        .remove_from_parent(child_ptr, &mut old_parent)
+                        .ok_or(FileSystemError::AccessDenied)?;
+                    new_parent.children.insert(filename.into(), entry);
+                }
+                Ok(())
             };
-            if Arc::ptr_eq(&old_parent, &new_parent) {
-                // Movement inside the same folder
-                let mut parent = new_parent.write().unwrap();
-                if !replace_if_exists && parent.children.contains_key(CaselessStr::new(filename)) {
-                    return Err(FileSystemError::ObjectNameCollision);
-                }
-                let entry = self.remove_from_parent(child_ptr, &mut parent).ok_or(FileSystemError::AccessDenied)?;
-                parent.children.insert(filename.into(), entry);
-            } else {
-                // Movement between different folders
-                let mut old_parent = old_parent.write().unwrap();
-                let mut new_parent = new_parent.write().unwrap();
-                if !replace_if_exists && new_parent.children.contains_key(CaselessStr::new(filename)) {
-                    return Err(FileSystemError::ObjectNameCollision);
-                }
-                let entry = self.remove_from_parent(child_ptr, &mut old_parent).ok_or(FileSystemError::AccessDenied)?;
-                new_parent.children.insert(filename.into(), entry);
-            }
-            // Reset parent
             match &self.obj {
                 Entry::Folder(f) => {
-                    f.write().unwrap().parent = Arc::downgrade(&new_parent);
-                },
+                    let child_ptr = Arc::as_ptr(f) as _;
+                    let mut f = f.write().unwrap();
+                    handle_fn(
+                        child_ptr,
+                        f.parent.upgrade().ok_or(FileSystemError::AccessDenied)?,
+                    )?;
+                    // Reset parent
+                    f.parent = Arc::downgrade(&new_parent);
+                }
                 Entry::File(f) => {
-                    f.write().unwrap().parent = Arc::downgrade(&new_parent);
-                },
-            }
+                    let child_ptr = Arc::as_ptr(f) as _;
+                    let mut f = f.write().unwrap();
+                    handle_fn(
+                        child_ptr,
+                        f.parent.upgrade().ok_or(FileSystemError::AccessDenied)?,
+                    )?;
+                    // Reset parent
+                    f.parent = Arc::downgrade(&new_parent);
+                }
+            };
             Ok(())
         } else {
             Err(FileSystemError::AccessDenied)
@@ -785,7 +794,11 @@ impl super::FsProvider for MemFsProvider {
     fn get_name(&self) -> &'static str {
         "memfs"
     }
-    fn construct(&self, config: &str) -> anyhow::Result<Arc<dyn FileSystemHandler>> {
+    fn construct(
+        &self,
+        config: serde_json::Value,
+        ctx: &mut dyn super::FileSystemCreationContext,
+    ) -> Result<Arc<dyn FileSystemHandler>, super::FileSystemCreationError> {
         Ok(Arc::new(MemFsHandler::new()))
     }
 }

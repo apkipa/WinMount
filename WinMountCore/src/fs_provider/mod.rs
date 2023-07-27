@@ -37,6 +37,8 @@ pub enum FileSystemError {
     AccessDenied,
     #[error("the file does not exist")]
     NoSuchFile,
+    #[error("an attempt has been made to remove a file or directory that cannot be deleted")]
+    CannotDelete,
     #[error("the parameter specified in the request is not valid")]
     InvalidParameter,
 }
@@ -243,12 +245,6 @@ pub struct CreateFileInfo<'c> {
     pub new_file_created: bool,
 }
 
-// type FileHandle = NonZeroUsize;
-// struct File<'c> {
-//     handle: NonZeroUsize,
-//     phantom_file: PhantomData<&'c ()>,
-// }
-
 pub struct FileStatInfo {
     pub index: u64,
     pub size: u64,
@@ -370,15 +366,6 @@ pub struct FileSystemSpaceInfo {
     pub available_bytes_count: u64,
 }
 
-// trait FullFileSystemHandler {
-//     // fn as_handler(&self) -> &dyn FileSystemHandler
-//     fn create_file() -> FileSystemResult<FileHandle>;
-//     // fn wide_create_file() -> FileSystemResult<FileHandle>;
-
-//     fn as_wide() -> ...;
-// }
-// impl<T: ContextFileSystemHandler + WideContextFileSystemHandler> FullFileSystemHandler for T {}
-
 pub trait FileSystemHandler: Sync {
     fn create_file(
         &self,
@@ -424,12 +411,6 @@ pub trait FileSystemHandler: Sync {
     fn get_fs_free_space(&self) -> FileSystemResult<FileSystemSpaceInfo>;
     // TODO: Characteristics: read-only, case-sensitive, ...
     fn get_fs_characteristics(&self) -> FileSystemResult<FileSystemCharacteristics>;
-}
-
-struct ContextCreateFileInfo<T> {
-    context: T,
-    is_dir: bool,
-    new_file_created: bool,
 }
 
 bitflags! {
@@ -485,111 +466,41 @@ pub enum FileCreateDisposition {
     TruncateExisting = 5,
 }
 
-trait ContextFileSystemHandler {
-    type Context: Sync;
-
-    fn create_file(
-        &self,
-        filename: SegPath,
-        desired_access: FileDesiredAccess,
-        file_attributes: FileAttributes,
-        share_access: FileShareAccess,
-        create_disposition: FileCreateDisposition,
-        create_options: FileCreateOptions,
-    ) -> FileSystemResult<ContextCreateFileInfo<Self::Context>>;
-    // fn move_file(
-    //     &self,
-    //     file: either::Either<&mut OwnedFile<'_>, &str>,
-    //     dest_path: &str
-    // ) -> FileSystemResult<()>;
-    fn get_fs_free_space(&self) -> FileSystemResult<FileSystemSpaceInfo>;
-    fn get_fs_characteristics(&self) -> FileSystemResult<FileSystemCharacteristics>;
-
-    // fn create_file(&self, filename: &str, ...);
-    // fn cleanup(&self, filename: &str);
-    // fn close(&self, filename: &str);
-    // fn read_file(&self, filename: &str, ...);
-    // fn write_file(&self, filename: &str, ...);
-    // fn flush_file_buffers(&self, filename: &str) -> FileSystemResult<()>;
-    // fn stat_file(&self, filename: &str, ...);
-    // // TODO: Maybe find_files_with_pattern should be a generator?
-    // fn find_files_with_pattern(&self, filename: &str, ...);
-    // fn set_file_time(&self, filename: &str, ...);
-    // fn delete_file(&self, filename: &str, ...);
-    // fn delete_directory(&self, filename: &str, ...);
-    // fn move_file(&self, filename: &str, ...);
-    // fn set_end_of_file(&self, filename: &str, byte_offset: u64) -> FileSystemResult<()>;
-    // fn get_fs_free_space(&self, ...);
-    // // TODO: Characteristics: read-only, case-sensitive, ...
-    // fn get_fs_characteristics(&self, ...);
-
-    /*
-    fn create_file(&self, filename: SegPath) -> FileSystemResult<CreateFileInfo>;
-    fn cleanup(&self, filename: SegPath);
-    fn close(&self, filename: SegPath);
-    fn read_file(&self, filename: SegPath) -> FileSystemResult<u64>;
-    fn write_file(&self, filename: SegPath) -> FileSystemResult<u64>;
-    fn flush_file_buffers(&self, filename: SegPath) -> FileSystemResult<()>;
-    fn stat_file(&self, filename: SegPath);
-    // TODO: Maybe find_files_with_pattern should be a generator?
-    fn find_files_with_pattern(&self, filename: SegPath);
-    fn set_file_time(&self, filename: SegPath);
-    fn delete_file(&self, filename: SegPath);
-    fn delete_directory(&self, filename: SegPath);
-    fn move_file(&self, filename: SegPath);
-    fn set_end_of_file(&self, filename: SegPath, byte_offset: u64) -> FileSystemResult<()>;
-    fn get_fs_free_space(&self);
-    // TODO: Characteristics: read-only, case-sensitive, ...
-    fn get_fs_characteristics(&self);
-    */
-
-    // fn wide_handler(&self) -> &dyn WideFileSystemHandler where Self: Sized {
-    //     &WideFileSystemHandlerWrapper::new(self)
-    // }
-}
-
-trait WideContextFileSystemHandler {
-    type Context: Sync;
-    // TODO: WideFileSystemHandler
-    // TODO: Blanket method body
-}
-
-// struct WideFileSystemHandlerWrapper<'h> {
-//     // TODO: WideFileSystemHandlerWrapper
-//     handler: &'h dyn FileSystemHandler,
-// }
-
-// impl<'h> WideFileSystemHandlerWrapper<'h> {
-//     fn new(handler: &'h dyn FileSystemHandler) -> WideFileSystemHandlerWrapper<'h> {
-//         WideFileSystemHandlerWrapper{ handler }
-//     }
-// }
-
-// impl<'h> WideFileSystemHandler for WideFileSystemHandlerWrapper<'h> {
-//     // TODO...
-// }
-
-// trait FileSystem {
-//     type Handler: FileSystemHandler;
-//     fn handler(&self) -> &Self::Handler;
-// }
-
-// fn func(a: Box<dyn FileSystem>) {
-//     // let h = a.handler();
-// }
-
 pub struct FileSystem {
     id: Uuid,
     kind_id: Uuid,
     name: String,
-    handler: Box<dyn FileSystemHandler>,
+    handler: Arc<dyn FileSystemHandler>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum FileSystemCreationError {
+    #[error("the filesystem is not found")]
+    NotFound,
+    #[error("the filesystem depends on itself in some way, preventing the creation")]
+    CyclicDependency,
+    #[error("the filesystem configuration is invalid")]
+    InvalidFileSystem,
+    #[error("other error")]
+    Other(#[from] anyhow::Error),
+}
+
+pub trait FileSystemCreationContext {
+    fn get_or_create_fs(
+        &mut self,
+        id: &Uuid,
+        prefix_path: &str,
+    ) -> Result<Arc<dyn FileSystemHandler>, FileSystemCreationError>;
 }
 
 pub trait FsProvider {
     fn get_id(&self) -> Uuid;
-    // fn construct(&self, config: &str) -> anyhow::Result<Arc<FileSystem>>;
     fn get_name(&self) -> &'static str;
-    fn construct(&self, config: &str) -> anyhow::Result<Arc<dyn FileSystemHandler>>;
+    fn construct(
+        &self,
+        config: serde_json::Value,
+        ctx: &mut dyn FileSystemCreationContext,
+    ) -> Result<Arc<dyn FileSystemHandler>, FileSystemCreationError>;
 }
 
 pub fn init_fs_providers(

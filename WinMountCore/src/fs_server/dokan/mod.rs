@@ -70,8 +70,6 @@ impl DokanFServer {
             fs,
             pin: PhantomPinned,
         });
-        // TODO: Remove this
-        // crate::util::real_wait(&server.shutdown_flag, 0);
         let mut handle: DOKAN_HANDLE = std::ptr::null_mut();
         let mut options = DOKAN_OPTIONS {
             Version: DOKAN_VERSION as _,
@@ -145,6 +143,7 @@ impl super::FsServerProvider for DokanFServerProvider {
     fn construct(
         &self,
         fs: Arc<dyn crate::fs_provider::FileSystemHandler>,
+        config: serde_json::Value,
     ) -> anyhow::Result<Arc<dyn FileSystemServer>> {
         let result = DokanFServer::new(widestring::u16cstr!("M:"), fs)?;
         Ok(result)

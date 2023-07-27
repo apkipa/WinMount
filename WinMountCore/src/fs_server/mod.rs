@@ -13,6 +13,7 @@ pub trait FsServerProvider {
     fn construct(
         &self,
         fs: Arc<dyn crate::fs_provider::FileSystemHandler>,
+        config: serde_json::Value,
     ) -> anyhow::Result<Arc<dyn FileSystemServer>>;
 }
 
