@@ -92,12 +92,15 @@ pub(super) extern "stdcall" fn create_file(
     create_options: ULONG,
     dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
+    use widestring::u16cstr;
     wrap_ffi(|| {
         let dokan_file_info = unsafe { &mut *dokan_file_info };
         let server = server_from_dokan_file_info(dokan_file_info);
         let file_name = unsafe { U16CStr::from_ptr_str(file_name) };
-        // Block access to Recycle Bin
-        if file_name == widestring::u16cstr!("\\$RECYCLE.BIN") {
+        // Block access to system folders
+        if file_name == u16cstr!("\\$RECYCLE.BIN")
+            || file_name == u16cstr!("\\System Volume Information")
+        {
             return Err(FileSystemError::NoSuchFile);
         }
         let file_name = U16SegPath::new(file_name, PathDelimiter::BackSlash);
@@ -316,7 +319,7 @@ pub(super) extern "stdcall" fn find_files_with_pattern(
         }
         impl crate::fs_provider::WideFindFilesDataFiller for DokanFileDataFiller {
             fn fill_data(
-                &self,
+                &mut self,
                 name: &U16CStr,
                 stat: &crate::fs_provider::FileStatInfo,
             ) -> Result<(), ()> {
@@ -357,11 +360,11 @@ pub(super) extern "stdcall" fn find_files_with_pattern(
                 }
             }
         }
-        let data_filler = DokanFileDataFiller {
+        let mut data_filler = DokanFileDataFiller {
             fill_find_data,
             dokan_file_info,
         };
-        file.wide_find_files_with_pattern(&file_pattern, &data_filler)?;
+        file.wide_find_files_with_pattern(&file_pattern, &mut data_filler)?;
         Ok(())
     })
 }

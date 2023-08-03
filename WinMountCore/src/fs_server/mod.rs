@@ -5,9 +5,9 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 // NOTE: Drop FileSystemServer to stop a server, synchronously
-pub trait FileSystemServer {}
+pub trait FileSystemServer: Send + Sync {}
 
-pub trait FsServerProvider {
+pub trait FsServerProvider: Send {
     fn get_id(&self) -> Uuid;
     fn get_name(&self) -> &'static str;
     fn construct(

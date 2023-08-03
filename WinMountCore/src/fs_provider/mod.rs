@@ -73,10 +73,19 @@ pub struct SegPath<'a> {
 }
 
 impl<'a> SegPath<'a> {
+    // WARN: Could panic
     pub fn new(path: &'a str, delimiter: PathDelimiter) -> SegPath<'a> {
         if path.contains('\0') {
             panic!("path must not contain nul bytes");
         }
+        SegPath {
+            raw_path: path,
+            path: path.strip_prefix(delimiter.as_char()).unwrap_or(path),
+            delimiter,
+        }
+    }
+    pub fn new_truncate(path: &'a str, delimiter: PathDelimiter) -> SegPath<'a> {
+        let path = path.split_once('\0').map(|x| x.0).unwrap_or(path);
         SegPath {
             raw_path: path,
             path: path.strip_prefix(delimiter.as_char()).unwrap_or(path),
@@ -264,6 +273,11 @@ pub trait WideFilePattern {
 }
 
 pub struct AcceptAllFilePattern {}
+impl AcceptAllFilePattern {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
 impl FilePattern for AcceptAllFilePattern {
     fn check_name(&self, name: &str) -> bool {
         true
@@ -276,11 +290,11 @@ impl WideFilePattern for AcceptAllFilePattern {
 }
 
 pub trait FindFilesDataFiller {
-    fn fill_data(&self, name: &str, stat: &FileStatInfo) -> Result<(), ()>;
+    fn fill_data(&mut self, name: &str, stat: &FileStatInfo) -> Result<(), ()>;
 }
 
 pub trait WideFindFilesDataFiller {
-    fn fill_data(&self, name: &widestring::U16CStr, stat: &FileStatInfo) -> Result<(), ()>;
+    fn fill_data(&mut self, name: &widestring::U16CStr, stat: &FileStatInfo) -> Result<(), ()>;
 }
 
 // NOTE: wide functions should be overriden for better performance
@@ -311,7 +325,7 @@ pub trait File: Sync {
     fn find_files_with_pattern(
         &self,
         pattern: &dyn FilePattern,
-        filler: &dyn FindFilesDataFiller,
+        filler: &mut dyn FindFilesDataFiller,
     ) -> FileSystemResult<()>;
     fn get_wide_path(&self) -> Option<widestring::U16CString> {
         // widestring::U16CString::from_str(self.get_path())
@@ -327,7 +341,7 @@ pub trait File: Sync {
     fn wide_find_files_with_pattern(
         &self,
         pattern: &dyn WideFilePattern,
-        filler: &dyn WideFindFilesDataFiller,
+        filler: &mut dyn WideFindFilesDataFiller,
     ) -> FileSystemResult<()> {
         struct ToWideFilePatternWrapper<'a> {
             pattern: &'a dyn WideFilePattern,
@@ -339,17 +353,17 @@ pub trait File: Sync {
             }
         }
         struct ToWideFindFilesDataFillerWrapper<'a> {
-            filler: &'a dyn WideFindFilesDataFiller,
+            filler: &'a mut dyn WideFindFilesDataFiller,
         }
         impl FindFilesDataFiller for ToWideFindFilesDataFillerWrapper<'_> {
-            fn fill_data(&self, name: &str, stat: &FileStatInfo) -> Result<(), ()> {
+            fn fill_data(&mut self, name: &str, stat: &FileStatInfo) -> Result<(), ()> {
                 let name = widestring::U16CString::from_str_truncate(name);
                 self.filler.fill_data(&name, stat)
             }
         }
         let pattern = ToWideFilePatternWrapper { pattern };
-        let filler = ToWideFindFilesDataFillerWrapper { filler };
-        self.find_files_with_pattern(&pattern, &filler)
+        let mut filler = ToWideFindFilesDataFillerWrapper { filler };
+        self.find_files_with_pattern(&pattern, &mut filler)
     }
 }
 
@@ -366,7 +380,7 @@ pub struct FileSystemSpaceInfo {
     pub available_bytes_count: u64,
 }
 
-pub trait FileSystemHandler: Sync {
+pub trait FileSystemHandler: Send + Sync {
     fn create_file(
         &self,
         filename: SegPath,
@@ -486,14 +500,14 @@ pub enum FileSystemCreationError {
 }
 
 pub trait FileSystemCreationContext {
-    fn get_or_create_fs(
+    fn get_or_run_fs(
         &mut self,
         id: &Uuid,
         prefix_path: &str,
     ) -> Result<Arc<dyn FileSystemHandler>, FileSystemCreationError>;
 }
 
-pub trait FsProvider {
+pub trait FsProvider: Send {
     fn get_id(&self) -> Uuid;
     fn get_name(&self) -> &'static str;
     fn construct(

@@ -2,6 +2,7 @@ mod operations;
 
 use std::{
     marker::PhantomPinned,
+    mem::MaybeUninit,
     sync::{
         atomic::{AtomicBool, AtomicU32},
         Arc,
@@ -54,11 +55,41 @@ impl From<i32> for DokanError {
     }
 }
 
+static mut OPERATIONS: DOKAN_OPERATIONS = DOKAN_OPERATIONS {
+    ZwCreateFile: Some(operations::create_file),
+    Cleanup: Some(operations::cleanup),
+    CloseFile: Some(operations::close_file),
+    ReadFile: Some(operations::read_file),
+    WriteFile: Some(operations::write_file),
+    FlushFileBuffers: Some(operations::flush_file_buffers),
+    GetFileInformation: Some(operations::get_file_information),
+    FindFiles: None,
+    FindFilesWithPattern: Some(operations::find_files_with_pattern),
+    SetFileAttributes: Some(operations::set_file_attributes),
+    SetFileTime: Some(operations::set_file_time),
+    DeleteFile: Some(operations::delete_file),
+    DeleteDirectory: Some(operations::delete_directory),
+    MoveFile: Some(operations::move_file),
+    SetEndOfFile: Some(operations::set_end_of_file),
+    SetAllocationSize: Some(operations::set_allocation_size),
+    LockFile: None,
+    UnlockFile: None,
+    GetDiskFreeSpace: Some(operations::get_disk_free_space),
+    // GetVolumeInformation: Some(operations::get_volume_information),
+    GetVolumeInformation: None,
+    Mounted: Some(operations::mounted),
+    Unmounted: Some(operations::unmounted),
+    GetFileSecurity: None,
+    SetFileSecurity: None,
+    FindStreams: None,
+};
+
+// TODO: Consider pinning the struct due to Dokan requirements
 struct DokanFServer {
     handle: DOKAN_HANDLE,
     shutdown_flag: AtomicU32,
     fs: Arc<dyn FileSystemHandler>,
-    // TODO: Is data movable inside Arc?
+    dokan_options: MaybeUninit<DOKAN_OPTIONS>,
     pin: PhantomPinned,
 }
 
@@ -68,51 +99,29 @@ impl DokanFServer {
             handle: std::ptr::null_mut(),
             shutdown_flag: AtomicU32::new(0),
             fs,
+            dokan_options: MaybeUninit::uninit(),
             pin: PhantomPinned,
         });
         let mut handle: DOKAN_HANDLE = std::ptr::null_mut();
-        let mut options = DOKAN_OPTIONS {
-            Version: DOKAN_VERSION as _,
-            SingleThread: false.into(),
-            Options: DOKAN_OPTION_MOUNT_MANAGER,
-            GlobalContext: Arc::as_ptr(&server) as _,
-            MountPoint: mount_point.as_ptr(),
-            UNCName: std::ptr::null(),
-            Timeout: 0,
-            AllocationUnitSize: 0,
-            SectorSize: 0,
-            VolumeSecurityDescriptorLength: 0,
-            VolumeSecurityDescriptor: unsafe { std::mem::zeroed() },
-        };
-        let mut operations = DOKAN_OPERATIONS {
-            ZwCreateFile: Some(operations::create_file),
-            Cleanup: Some(operations::cleanup),
-            CloseFile: Some(operations::close_file),
-            ReadFile: Some(operations::read_file),
-            WriteFile: Some(operations::write_file),
-            FlushFileBuffers: Some(operations::flush_file_buffers),
-            GetFileInformation: Some(operations::get_file_information),
-            FindFiles: None,
-            FindFilesWithPattern: Some(operations::find_files_with_pattern),
-            SetFileAttributes: Some(operations::set_file_attributes),
-            SetFileTime: Some(operations::set_file_time),
-            DeleteFile: Some(operations::delete_file),
-            DeleteDirectory: Some(operations::delete_directory),
-            MoveFile: Some(operations::move_file),
-            SetEndOfFile: Some(operations::set_end_of_file),
-            SetAllocationSize: Some(operations::set_allocation_size),
-            LockFile: None,
-            UnlockFile: None,
-            GetDiskFreeSpace: Some(operations::get_disk_free_space),
-            // GetVolumeInformation: Some(operations::get_volume_information),
-            GetVolumeInformation: None,
-            Mounted: Some(operations::mounted),
-            Unmounted: Some(operations::unmounted),
-            GetFileSecurity: None,
-            SetFileSecurity: None,
-            FindStreams: None,
-        };
-        let result = unsafe { DokanCreateFileSystem(&mut options, &mut operations, &mut handle) };
+        let global_context = Arc::as_ptr(&server) as _;
+        let options = Arc::get_mut(&mut server)
+            .unwrap()
+            .dokan_options
+            .write(DOKAN_OPTIONS {
+                Version: DOKAN_VERSION as _,
+                SingleThread: false.into(),
+                Options: DOKAN_OPTION_MOUNT_MANAGER,
+                GlobalContext: global_context,
+                MountPoint: mount_point.as_ptr(),
+                UNCName: std::ptr::null(),
+                Timeout: 0,
+                AllocationUnitSize: 0,
+                SectorSize: 0,
+                VolumeSecurityDescriptorLength: 0,
+                VolumeSecurityDescriptor: unsafe { std::mem::zeroed() },
+            });
+        // SAFETY: Dokan doesn't actully mutate referenced variables, nor do we
+        let result = unsafe { DokanCreateFileSystem(options, &mut OPERATIONS, &mut handle) };
         if result != DOKAN_SUCCESS {
             return Err(DokanError::from(result));
         }
@@ -120,6 +129,9 @@ impl DokanFServer {
         Ok(server)
     }
 }
+
+unsafe impl Send for DokanFServer {}
+unsafe impl Sync for DokanFServer {}
 
 impl FileSystemServer for DokanFServer {}
 

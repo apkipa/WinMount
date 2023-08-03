@@ -638,7 +638,7 @@ impl super::File for MemFsFile<'_> {
         match &self.obj {
             Entry::File(f) => {
                 f.write().unwrap().stat.delete_on_close = delete_on_close;
-            },
+            }
             Entry::Folder(f) => {
                 let mut f = f.write().unwrap();
                 if delete_on_close && !f.children.is_empty() {
@@ -721,7 +721,7 @@ impl super::File for MemFsFile<'_> {
     fn find_files_with_pattern(
         &self,
         pattern: &dyn super::FilePattern,
-        filler: &dyn super::FindFilesDataFiller,
+        filler: &mut dyn super::FindFilesDataFiller,
     ) -> super::FileSystemResult<()> {
         // log::trace!("Find files with pattern");
         match &self.obj {
