@@ -7,21 +7,29 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Title="Xaml Islands C++ Sample">
+    Title="WinMount">
 
-    <Grid>
+    <Grid x:Name="LayoutRoot">
         <Grid.RowDefinitions>
-            <RowDefinition Height="40"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
-        <Grid x:Name="TitleBarContainer">
-            <Grid x:Name="TopRectangle" Background="Red" CornerRadius="0" Grid.Row="0"/>
-            <AutoSuggestBox QueryIcon="Find" PlaceholderText="Search" HorizontalAlignment="Center" Width="260" Height="32"/>
+        <Frame x:Name="MainFrame" Grid.Row="0" Grid.RowSpan="2" CacheSize="0">
+            <Frame.ContentTransitions>
+                <TransitionCollection>
+                    <NavigationThemeTransition>
+                        <NavigationThemeTransition.DefaultNavigationTransitionInfo>
+                            <EntranceNavigationTransitionInfo/>
+                        </NavigationThemeTransition.DefaultNavigationTransitionInfo>
+                    </NavigationThemeTransition>
+                </TransitionCollection>
+            </Frame.ContentTransitions>
+        </Frame>
+        <Grid x:Name="TitleBarContainer" Margin="40,0,0,0" Height="{StaticResource AppTitleBarHeight}">
+            <Rectangle x:Name="BackgroundDragArea" Fill="Transparent"/>
+            <!-- Default padding: 12 (+ 40 for nav bar) -->
+            <!-- Margin: 0,-1,0,0 for alignment? -->
+            <TextBlock Text="WinMount" VerticalAlignment="Center" TextLineBounds="Tight" IsHitTestVisible="False" FontSize="12" Padding="12,0,0,0" Margin="0,0,0,0"/>
         </Grid>
-        <StackPanel Grid.Row="1" Orientation="Vertical" HorizontalAlignment="Center" VerticalAlignment="Center">
-            <TextBlock x:Name="ContentText" Text="Hello, Xaml Islands!" FontSize="40" Padding="0,0,0,20"/>
-            <Button HorizontalAlignment="Center" x:Name="Button" Click="ClickHandler">Open a new window</Button>
-            <Button HorizontalAlignment="Center" Margin="0,8,0,0" Click="EnableCustomTitleBarButton_Clicked">Switch custom title bar</Button>
-        </StackPanel>
     </Grid>
 </w32x:Window>

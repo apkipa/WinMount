@@ -1,0 +1,44 @@
+// For consumption over WinMount.App.Pages
+namespace WinMount.App.Pages {
+    runtimeclass FspItem {
+        Guid Id{ get; };
+        String Name{ get; };
+    };
+    runtimeclass FsItem : Windows.UI.Xaml.Data.INotifyPropertyChanged {
+        Guid Id{ get; };
+        String Name{ get; };
+        Guid KindId{ get; };
+        String KindDisplayName{ get; };
+        Boolean IsRunning{ get; };
+        String StartStopButton_Text{ get; };
+    };
+    runtimeclass FsrvpItem {
+        Guid Id{ get; };
+        String Name{ get; };
+    };
+    runtimeclass FsrvItem : Windows.UI.Xaml.Data.INotifyPropertyChanged {
+        Guid Id{ get; };
+        String Name{ get; };
+        Guid KindId{ get; };
+        String KindDisplayName{ get; };
+        Guid InputFsId{ get; };
+        String InputFsDisplayName{ get; };
+        Boolean IsRunning{ get; };
+    };
+
+    // A "ViewModel" for connection-wide usage
+    runtimeclass MainViewModel {
+        // Connection-wide properties
+        // WARN: Never insert objects of mismatching types into these vectors!
+        IObservableVector<Object> FspItems{ get; };
+        IObservableVector<Object> FsItems{ get; };
+        IObservableVector<Object> FsrvpItems{ get; };
+        IObservableVector<Object> FsrvItems{ get; };
+
+        // Methods
+        Windows.Foundation.IAsyncAction ReloadFsItemsAsync();
+        Windows.Foundation.IAsyncAction ReloadFsrvItemsAsync();
+        // WARN: If not found, this method will return a special string instead of an empty one
+        String GetFspNameFromId(Guid id);
+    };
+}

@@ -4,29 +4,77 @@
     <ApplicationDefinition Include="App.xaml" />
   </ItemGroup>
   <ItemGroup>
-    <Page Include="MainPage.xaml" />
     <Page Include="MainWindow.xaml" />
+    <Page Include="Pages\MainPage.xaml">
+      <Filter>Pages</Filter>
+    </Page>
+    <Page Include="Pages\DaemonManagePage.xaml">
+      <Filter>Pages</Filter>
+    </Page>
+    <Page Include="Pages\MainFsPage.xaml">
+      <Filter>Pages</Filter>
+    </Page>
+    <Page Include="Pages\MainFsrvPage.xaml">
+      <Filter>Pages</Filter>
+    </Page>
+    <Page Include="Pages\MainSettingsPage.xaml">
+      <Filter>Pages</Filter>
+    </Page>
+    <Page Include="Pages\MainAboutPage.xaml">
+      <Filter>Pages</Filter>
+    </Page>
   </ItemGroup>
   <ItemGroup>
     <Midl Include="App.idl" />
-    <Midl Include="MainPage.idl" />
     <Midl Include="Win32Xaml.idl" />
+    <Midl Include="Pages\Items.idl">
+      <Filter>Pages\Items</Filter>
+    </Midl>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp" />
     <ClCompile Include="App.cpp" />
-    <ClCompile Include="MainPage.cpp" />
     <ClCompile Include="$(GeneratedFilesDir)module.g.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="Win32Xaml.cpp" />
+    <ClCompile Include="Code\WinMountClient.cpp">
+      <Filter>Code</Filter>
+    </ClCompile>
+    <ClCompile Include="Code\util.cpp">
+      <Filter>Code</Filter>
+    </ClCompile>
+    <ClCompile Include="Pages\Items.cpp">
+      <Filter>Pages\Items</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />
     <ClInclude Include="Win32Xaml.h" />
+    <ClInclude Include="Code\WinMountClient.hpp">
+      <Filter>Code</Filter>
+    </ClInclude>
+    <ClInclude Include="Code\util.hpp">
+      <Filter>Code</Filter>
+    </ClInclude>
+    <ClInclude Include="Pages\Items.h">
+      <Filter>Pages\Items</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Assets">
       <UniqueIdentifier>{e48dc53e-40b1-40cb-970a-f89935452892}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Pages">
+      <UniqueIdentifier>{fb4fe488-a097-4540-9f99-259bd4bf301b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Code">
+      <UniqueIdentifier>{97bd0145-d62f-4695-a502-f1c87170fddd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Strings">
+      <UniqueIdentifier>{bd24814c-e606-4829-ab34-f31d004e190d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Pages\Items">
+      <UniqueIdentifier>{5125902c-8d60-4074-9a9b-d11ad020973e}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>

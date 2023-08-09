@@ -1,9 +1,9 @@
 #include "pch.h"
 #include "Win32Xaml.h"
-#include "Win32Xaml.AppService.g.cpp"
-#include "Win32Xaml.Window.g.cpp"
-#include "Win32Xaml.WindowTitleBar.g.cpp"
-#include "Win32Xaml.ShellIcon.g.cpp"
+#include "Win32Xaml\AppService.g.cpp"
+#include "Win32Xaml\Window.g.cpp"
+#include "Win32Xaml\WindowTitleBar.g.cpp"
+#include "Win32Xaml\ShellIcon.g.cpp"
 
 #include <Uxtheme.h>
 #include <dwmapi.h>
@@ -947,11 +947,21 @@ namespace winrt::Win32Xaml::implementation {
         m_dwxs_n2 = m_dwxs.as<IDesktopWindowXamlSourceNative2>();
         check_hresult(m_dwxs_n2->AttachToWindow(m_root_hwnd));
         check_hresult(m_dwxs_n2->get_WindowHandle(&m_xaml_hwnd));
+#if 0
         m_dwxs.TakeFocusRequested(
+            // TODO: TakeFocusRequested misfires in NavigationView; figure out the solution
             [](DesktopWindowXamlSource const& sender, DesktopWindowXamlSourceTakeFocusRequestedEventArgs const& e) {
-                sender.NavigateFocus(e.Request());
+                auto reason = e.Request().Reason();
+                if (reason == XamlSourceFocusNavigationReason::First ||
+                    reason == XamlSourceFocusNavigationReason::Last)
+                {
+                    sender.NavigateFocus(e.Request());
+                }
             }
         );
+#else
+        m_root_cp.TabFocusNavigation(Windows::UI::Xaml::Input::KeyboardNavigationMode::Cycle);
+#endif
         auto core_wnd = Windows::UI::Core::CoreWindow::GetForCurrentThread();
         check_hresult(core_wnd.as<ICoreWindowInterop>()->get_WindowHandle(&m_corewnd_hwnd));
         if (m_is_main) {
@@ -1076,7 +1086,7 @@ namespace winrt::Win32Xaml::implementation {
         if (!m_is_main) {
             throw hresult_invalid_argument(L"Cannot set title bar for non-main window");
         }
-        EnsureInputSinkWindow();
+        this->EnsureInputSinkWindow();
 
         auto cav_tb = Windows::ApplicationModel::Core::CoreApplication::GetCurrentView().TitleBar();
         if (!element) {

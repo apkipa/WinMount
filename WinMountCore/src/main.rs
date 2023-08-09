@@ -500,24 +500,6 @@ async fn shutdown_signal(shutdown_notify: &tokio::sync::Notify) {
 async fn run_loop(mut app_ctx: AppContext, server_addr: SocketAddr) -> anyhow::Result<()> {
     log::warn!("Starting WinMountCore daemon...");
 
-    // TODO: Remove these
-    let memfs_id = Uuid::new_v4();
-    let dokan_fserver_id = Uuid::new_v4();
-    app_ctx.filesystems.insert(
-        memfs_id,
-        FSInfo::new("First memfs".to_owned(), fs_provider::memfs::MEMFS_ID),
-    );
-    app_ctx.filesystem_servers.insert(
-        dokan_fserver_id,
-        FServerInfo::new(
-            "First Dokan drive".to_owned(),
-            fs_server::dokan::DOKAN_FSERVER_ID,
-            memfs_id,
-        ),
-    );
-    AppContextForCreation::from(&mut app_ctx).get_or_run_fs(&memfs_id, "")?;
-    AppContextForCreation::from(&mut app_ctx).start_fs_server(&dokan_fserver_id)?;
-
     log::info!("Now listening on {server_addr}");
     let shutdown_notify = Arc::new(tokio::sync::Notify::new());
     let app_ctx = Arc::new(Mutex::new(app_ctx));
@@ -528,14 +510,6 @@ async fn run_loop(mut app_ctx: AppContext, server_addr: SocketAddr) -> anyhow::R
         )
         .with_graceful_shutdown(shutdown_signal(&shutdown_notify))
         .await?;
-
-    // let shutdown_flag = Arc::new(AtomicU32::new(0));
-    // let shutdown_flag2 = Arc::clone(&shutdown_flag);
-    // ctrlc::set_handler(move || {
-    //     shutdown_flag2.store(1, Ordering::Release);
-    //     atomic_wait::wake_one(shutdown_flag2.as_ref());
-    // })?;
-    // util::real_wait(&shutdown_flag, 0);
 
     log::warn!("Stopping WinMountCore daemon...");
 

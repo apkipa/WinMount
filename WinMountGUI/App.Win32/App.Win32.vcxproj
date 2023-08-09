@@ -10,7 +10,7 @@
     <ProjectGuid>{5515fc6e-157a-444f-909e-9fade03e7d85}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>WinMount.App.Win32</RootNamespace>
-    <WindowsTargetPlatformVersion Condition=" '$(WindowsTargetPlatformVersion)' == '' ">10.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion Condition=" '$(WindowsTargetPlatformVersion)' == '' ">10.0.22000.0</WindowsTargetPlatformVersion>
     <WindowsTargetPlatformMinVersion>10.0.18362.0</WindowsTargetPlatformMinVersion>
   </PropertyGroup>
   <PropertyGroup>

@@ -1,0 +1,202 @@
+﻿<Page
+    x:Class="WinMount.App.Pages.MainFsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:WinMount.App"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:muxc="using:Microsoft.UI.Xaml.Controls"
+    xmlns:pages="using:WinMount.App.Pages"
+    mc:Ignorable="d">
+
+    <Page.Resources>
+        <ControlTemplate x:Key="SimpleButtonTemplate" TargetType="Button">
+            <Grid x:Name="RootGrid" Background="{TemplateBinding Background}" CornerRadius="{TemplateBinding CornerRadius}">
+                <VisualStateManager.VisualStateGroups>
+                    <VisualStateGroup x:Name="CommonStates">
+                        <VisualState x:Name="Normal"/>
+                        <VisualState x:Name="PointerOver">
+                            <VisualState.Setters>
+                                <Setter Target="RootGridBackground.Background" Value="{ThemeResource AppBarButtonBackgroundPointerOver}"/>
+                            </VisualState.Setters>
+                        </VisualState>
+                        <VisualState x:Name="Pressed">
+                            <VisualState.Setters>
+                                <Setter Target="RootGridBackground.Background" Value="{ThemeResource AppBarButtonBackgroundPressed}"/>
+                            </VisualState.Setters>
+                        </VisualState>
+                        <VisualState x:Name="Disabled">
+                            <VisualState.Setters>
+                                <Setter Target="RootGridBackground.Background" Value="{ThemeResource AppBarButtonBackgroundDisabled}"/>
+                                <Setter Target="ContentPresenter.Foreground" Value="{ThemeResource AppBarButtonForegroundDisabled}"/>
+                            </VisualState.Setters>
+                        </VisualState>
+                    </VisualStateGroup>
+                </VisualStateManager.VisualStateGroups>
+                <Grid x:Name="RootGridBackground" Background="{ThemeResource AppBarButtonBackground}"/>
+                <ContentPresenter x:Name="ContentPresenter" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{TemplateBinding CornerRadius}" Content="{TemplateBinding Content}" ContentTransitions="{TemplateBinding ContentTransitions}" ContentTemplate="{TemplateBinding ContentTemplate}" Padding="{TemplateBinding Padding}" HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" AutomationProperties.AccessibilityView="Raw"/>
+            </Grid>
+        </ControlTemplate>
+    </Page.Resources>
+
+    <Grid>
+        <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup x:Name="DetailsPaneStates">
+                <VisualState x:Name="Empty"/>
+                <VisualState x:Name="AddNewFsItem">
+                    <VisualState.Setters>
+                        <Setter Target="DetailsPlaceholderRoot.Visibility" Value="Collapsed"/>
+                        <Setter Target="DetailsAddNewRoot.Visibility" Value="Visible"/>
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="EditFsItem">
+                    <VisualState.Setters>
+                        <Setter Target="DetailsPlaceholderRoot.Visibility" Value="Collapsed"/>
+                        <Setter Target="DetailsEditCurrentRoot.Visibility" Value="Visible"/>
+                    </VisualState.Setters>
+                </VisualState>
+            </VisualStateGroup>
+        </VisualStateManager.VisualStateGroups>
+        
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="360"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Grid BorderThickness="0,0,1,0" BorderBrush="#e6e6e6" Padding="{StaticResource AppTitleBarTopThickness}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="40"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Filesystems List" Margin="8,0" VerticalAlignment="Center" TextLineBounds="Tight"/>
+                <AppBarButton x:Name="AddNewFsButton" Icon="Add" Grid.Column="1" Width="40"
+                              Click="AddNewFsButton_Click"/>
+                <AppBarButton x:Name="ReloadFsListButton" Icon="Refresh" Grid.Column="2" Width="40"
+                              Click="ReloadFsListButton_Click"/>
+            </Grid>
+            <ListView x:Name="FsListView" Grid.Row="1" BorderThickness="0,1,0,0" BorderBrush="#e6e6e6"
+                      SelectionChanged="FsListView_SelectionChanged">
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="pages:FsItem">
+                        <Grid Height="48">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{x:Bind Name}" TextLineBounds="Tight" VerticalAlignment="Center"
+                                       Margin="0,4,0,0" HorizontalAlignment="Stretch"/>
+                            <TextBlock Text="{x:Bind KindDisplayName}" Grid.Row="1" Foreground="Gray"
+                                       TextLineBounds="Tight" VerticalAlignment="Center" Margin="0,0,0,4"
+                                       HorizontalAlignment="Stretch"/>
+                            <!-- Play -->
+                            <Button Margin="4,0,0,0" Grid.Column="1" Grid.RowSpan="2" Width="32" Height="32"
+                                    FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                                    Content="{x:Bind StartStopButton_Text,Mode=OneWay}" Background="Transparent"
+                                    Template="{StaticResource SimpleButtonTemplate}"
+                                    Click="FsItem_StartStopButton_Click"/>
+                            <!-- Delete -->
+                            <!--
+                            <Button Margin="4,0,0,0" Grid.Column="2" Grid.RowSpan="2" Width="32" Height="32"
+                                    FontFamily="{ThemeResource SymbolThemeFontFamily}" Content="&#xE74D;"
+                                    Background="Transparent"
+                                    Template="{StaticResource SimpleButtonTemplate}"/>
+                            -->
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                        <Setter Property="BorderBrush" Value="#e6e6e6"/>
+                        <Setter Property="BorderThickness" Value="0,0,0,1"/>
+                    </Style>
+                </ListView.ItemContainerStyle>
+            </ListView>
+        </Grid>
+        <Grid Grid.Column="1" Padding="{StaticResource AppTitleBarTopThickness}">
+            <Grid x:Name="DetailsPlaceholderRoot">
+                <TextBlock Text="Intentionally left blank" HorizontalAlignment="Center" VerticalAlignment="Center"
+                           TextLineBounds="Tight"/>
+            </Grid>
+            <Grid x:Name="DetailsAddNewRoot" Visibility="Collapsed">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Padding="8,0,8,0" Spacing="4">
+                        <TextBlock Text="Add New Filesystem" FontWeight="SemiBold" FontSize="28"/>
+                        <TextBlock Text="Name"/>
+                        <TextBox x:Name="DetailsAddNew_FsNameTextBox"/>
+                        <ComboBox x:Name="DetailsAddNew_FsTypeComboBox" Header="Filesystem Type">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate x:DataType="pages:FspItem">
+                                    <TextBlock Text="{x:Bind Name}"/>
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                        <TextBlock Text="Configuration"/>
+                        <TextBox x:Name="DetailsAddNew_FsConfigTextBox" AcceptsReturn="True"
+                                 HorizontalAlignment="Stretch" FontFamily="Consolas" IsSpellCheckEnabled="False"/>
+                    </StackPanel>
+                </ScrollViewer>
+                <Grid BorderBrush="#e6e6e6" BorderThickness="0,1,0,0" Padding="12,8" Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="DetailsAddNew_CreateButton" Content="Create" Grid.Column="1"
+                            Style="{ThemeResource AccentButtonStyle}"
+                            Click="DetailsAddNew_CreateButton_Click"/>
+                </Grid>
+            </Grid>
+            <Grid x:Name="DetailsEditCurrentRoot" Visibility="Collapsed">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Padding="8,0,8,0" Spacing="4">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Edit Filesystem" FontWeight="SemiBold" FontSize="28"/>
+                            <Button Margin="4,0,0,0" Grid.Column="1" Width="36" Height="36"
+                                    FontFamily="{ThemeResource SymbolThemeFontFamily}" Content="&#xE74D;"
+                                    Background="Transparent" Foreground="Firebrick" FontSize="19"
+                                    Template="{StaticResource SimpleButtonTemplate}"
+                                    Click="DetailsEditCurrent_DeleteButton_Click"/>
+                        </Grid>
+                        <TextBlock Text="Name"/>
+                        <TextBox x:Name="DetailsEditCurrent_FsNameTextBox"/>
+                        <ComboBox x:Name="DetailsEditCurrent_FsTypeComboBox" Header="Filesystem Type"
+                                  IsEnabled="False"/>
+                        <TextBlock Text="Configuration"/>
+                        <TextBox x:Name="DetailsEditCurrent_FsConfigTextBox" AcceptsReturn="True"
+                                 HorizontalAlignment="Stretch" FontFamily="Consolas" IsSpellCheckEnabled="False"/>
+                    </StackPanel>
+                </ScrollViewer>
+                <Grid BorderBrush="#e6e6e6" BorderThickness="0,1,0,0" Padding="12,8" Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Button Content="Apply Changes" Grid.Column="1" Style="{ThemeResource AccentButtonStyle}"
+                            Click="DetailsEditCurrent_CommitButton_Click"/>
+                </Grid>
+            </Grid>
+        </Grid>
+    </Grid>
+</Page>

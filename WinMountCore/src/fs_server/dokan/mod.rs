@@ -157,7 +157,7 @@ impl super::FsServerProvider for DokanFServerProvider {
         fs: Arc<dyn crate::fs_provider::FileSystemHandler>,
         config: serde_json::Value,
     ) -> anyhow::Result<Arc<dyn FileSystemServer>> {
-        let result = DokanFServer::new(widestring::u16cstr!("M:"), fs)?;
+        let result = DokanFServer::new(widestring::u16cstr!("M:\\"), fs)?;
         Ok(result)
     }
 }

@@ -1,0 +1,8 @@
+namespace WinMount.App.Pages {
+    [default_interface]
+    runtimeclass MainFsrvPage : Windows.UI.Xaml.Controls.Page {
+        MainFsrvPage();
+
+        static String IsRunningToStartStopButtonText(Boolean isRunning);
+    }
+}

@@ -13,7 +13,12 @@ use uuid::Uuid;
 
 use crate::fs_provider::FileSystemError;
 
-// NOTE: Request is followed by a Response with the same id
+use crate::util::parse_u32;
+const SERVER_MAJOR: u32 = parse_u32(env!("CARGO_PKG_VERSION_MAJOR"));
+const SERVER_MINOR: u32 = parse_u32(env!("CARGO_PKG_VERSION_MINOR"));
+const SERVER_PATCH: u32 = parse_u32(env!("CARGO_PKG_VERSION_PATCH"));
+
+// NOTE: Request is followed by a Response with the same syn number
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "type")]
@@ -94,99 +99,6 @@ pub(super) enum WsBinMessage<'a> {
         written_bytes: u64,
     },
 }
-
-// #[repr(u32)]
-// enum WsBinMessageType {
-//     ReadFileReq = 1,
-//     ReadFileResp,
-//     WriteFileReq,
-//     WriteFileResp,
-// }
-// enum WsBinMessage {
-//     ReadFileReq(WsBinReadFileReqMessage),
-//     ReadFileResp(WsBinReadFileRespMessage),
-//     WriteFileReq(WsBinWriteFileReqMessage),
-//     WriteFileResp(WsBinWriteFileRespMessage),
-// }
-
-// struct WsBinReadFileReqMessage {
-//     id: u64,
-//     file_id: u64,
-//     offset: u64,
-//     size: u64,
-// }
-// impl WsBinReadFileReqMessage {
-//     fn from_bin(mut s: &[u8]) -> std::io::Result<Self> {
-//         let id = s.read_u64::<BigEndian>()?;
-//         let file_id = s.read_u64::<BigEndian>()?;
-//         let offset = s.read_u64::<BigEndian>()?;
-//         let size = s.read_u64::<BigEndian>()?;
-//         Ok(Self {
-//             id,
-//             file_id,
-//             offset,
-//             size,
-//         })
-//     }
-// }
-
-// struct WsBinReadFileRespMessage {
-//     id: u64,
-//     file_id: u64,
-//     status: i32,
-//     payload: Vec<u8>,
-// }
-// impl WsBinReadFileRespMessage {
-//     fn into_bin(self) -> Vec<u8> {
-//         let mut b = Vec::new();
-//         b.extend(self.id.to_be_bytes());
-//         b.extend(self.file_id.to_be_bytes());
-//         b.extend(self.status.to_be_bytes());
-//         b.extend((self.payload.len() as u64).to_be_bytes());
-//         b.extend(self.payload);
-//         b
-//     }
-// }
-
-// struct WsBinWriteFileReqMessage {
-//     id: u64,
-//     file_id: u64,
-//     offset: u64,
-//     payload: Vec<u8>,
-// }
-// impl WsBinWriteFileReqMessage {
-//     fn from_bin(mut s: &[u8]) -> std::io::Result<Self> {
-//         let id = s.read_u64::<BigEndian>()?;
-//         let file_id = s.read_u64::<BigEndian>()?;
-//         let offset = s.read_u64::<BigEndian>()?;
-//         let size = s.read_u64::<BigEndian>()?;
-//         let mut payload = Vec::with_capacity(size as _);
-//         s.read_exact(&mut payload)?;
-//         Ok(Self {
-//             id,
-//             file_id,
-//             offset,
-//             payload,
-//         })
-//     }
-// }
-
-// struct WsBinWriteFileRespMessage {
-//     id: u64,
-//     file_id: u64,
-//     status: i32,
-//     written_bytes: u64,
-// }
-// impl WsBinWriteFileRespMessage {
-//     fn into_bin(self) -> Vec<u8> {
-//         let mut b = Vec::new();
-//         b.extend(self.id.to_be_bytes());
-//         b.extend(self.file_id.to_be_bytes());
-//         b.extend(self.status.to_be_bytes());
-//         b.extend(self.written_bytes.to_be_bytes());
-//         b
-//     }
-// }
 
 // WARN: A self-referential sealed struct which uses **unsafe**
 struct FileSystemWithChildren {
@@ -750,10 +662,6 @@ async fn handle_websocket(socket: &mut WebSocket, app_ctx: Arc<Mutex<crate::AppC
 
     // Check version first
     if let Some(Ok(Message::Text(s))) = socket.recv().await {
-        use crate::util::parse_u32;
-        const SERVER_MAJOR: u32 = parse_u32(env!("CARGO_PKG_VERSION_MAJOR"));
-        const SERVER_MINOR: u32 = parse_u32(env!("CARGO_PKG_VERSION_MINOR"));
-        const SERVER_PATCH: u32 = parse_u32(env!("CARGO_PKG_VERSION_PATCH"));
         let mut accept_connection = true;
         let (mut client_major, mut client_minor, mut client_patch): (u32, u32, u32) = (0, 0, 0);
         if let Err(e) = scanf::sscanf!(
@@ -893,8 +801,12 @@ async fn handle_websocket(socket: &mut WebSocket, app_ctx: Arc<Mutex<crate::AppC
 async fn ws_handler(ws: WebSocketUpgrade, State(app_state): State<WebAppState>) -> Response {
     ws.on_upgrade(|mut socket| async {
         handle_websocket(&mut socket, app_state.app_ctx).await;
-        if let Err(e) = socket.close().await {
-            log::warn!("Failed to close WebSocket: {e}");
+        // HACK: Detect error kind by string comparison
+        match socket.close().await {
+            Err(e) if e.to_string() != "Connection closed normally" => {
+                log::warn!("Failed to close WebSocket: {e}");
+            },
+            _ => (),
         }
     })
 }

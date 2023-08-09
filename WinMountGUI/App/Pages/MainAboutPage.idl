@@ -1,0 +1,6 @@
+namespace WinMount.App.Pages {
+    [default_interface]
+    runtimeclass MainAboutPage : Windows.UI.Xaml.Controls.Page {
+        MainAboutPage();
+    }
+}

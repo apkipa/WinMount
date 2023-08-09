@@ -6,6 +6,13 @@
     xmlns:muxc="using:Microsoft.UI.Xaml.Controls">
 
     <Application.Resources>
-        <muxc:XamlControlsResources Version="Latest"/>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <muxc:XamlControlsResources Version="WinUI_2dot5"/>
+            </ResourceDictionary.MergedDictionaries>
+            <!-- NOTE: Remember to modify them all at once! -->
+            <x:Double x:Key="AppTitleBarHeight">40</x:Double>
+            <Thickness x:Key="AppTitleBarTopThickness">0,40,0,0</Thickness>
+        </ResourceDictionary>
     </Application.Resources>
 </Application>

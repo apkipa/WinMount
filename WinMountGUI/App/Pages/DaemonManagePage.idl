@@ -1,0 +1,18 @@
+namespace WinMount.App.Pages {
+    enum DaemonManagePageScenarioMode {
+        FirstLoad,
+        AbruptDisconnection,
+        NonFirstLoad,
+    };
+
+    struct DaemonManagePageNavParams {
+        DaemonManagePageScenarioMode ScenarioMode;
+    };
+
+    [default_interface]
+    runtimeclass DaemonManagePage : Windows.UI.Xaml.Controls.Page {
+        DaemonManagePage();
+
+        Windows.Foundation.IAsyncOperation<Object> GetConnectionResultAsync();
+    }
+}

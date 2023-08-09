@@ -1,8 +1,8 @@
 #pragma once
-#include "Win32Xaml.AppService.g.h"
-#include "Win32Xaml.WindowTitleBar.g.h"
-#include "Win32Xaml.Window.g.h"
-#include "Win32Xaml.ShellIcon.g.h"
+#include "Win32Xaml\AppService.g.h"
+#include "Win32Xaml\WindowTitleBar.g.h"
+#include "Win32Xaml\Window.g.h"
+#include "Win32Xaml\ShellIcon.g.h"
 #include <windows.ui.xaml.hosting.desktopwindowxamlsource.h>
 #include <dcomp.h>
 #include <ShellScalingApi.h>
