@@ -805,7 +805,7 @@ async fn ws_handler(ws: WebSocketUpgrade, State(app_state): State<WebAppState>) 
         match socket.close().await {
             Err(e) if e.to_string() != "Connection closed normally" => {
                 log::warn!("Failed to close WebSocket: {e}");
-            },
+            }
             _ => (),
         }
     })

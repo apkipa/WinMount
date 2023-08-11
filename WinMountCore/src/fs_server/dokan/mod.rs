@@ -14,7 +14,7 @@ use widestring::U16CStr;
 
 use dokan_sys::*;
 
-use atomic_wait::*;
+// use winapi::um::winbase::INFINITE;
 
 use super::FileSystemServer;
 use crate::fs_provider::FileSystemHandler;
@@ -90,6 +90,7 @@ struct DokanFServer {
     shutdown_flag: AtomicU32,
     fs: Arc<dyn FileSystemHandler>,
     dokan_options: MaybeUninit<DOKAN_OPTIONS>,
+    open_objs: scc::HashSet<u64>,
     pin: PhantomPinned,
 }
 
@@ -100,6 +101,7 @@ impl DokanFServer {
             shutdown_flag: AtomicU32::new(0),
             fs,
             dokan_options: MaybeUninit::uninit(),
+            open_objs: scc::HashSet::new(),
             pin: PhantomPinned,
         });
         let mut handle: DOKAN_HANDLE = std::ptr::null_mut();
@@ -128,6 +130,30 @@ impl DokanFServer {
         Arc::get_mut(&mut server).unwrap().handle = handle;
         Ok(server)
     }
+
+    fn owned_file_to_u64(file: crate::fs_provider::OwnedFile) -> u64 {
+        Box::into_raw(Box::new(file)) as _
+    }
+    unsafe fn u64_to_owned_file<'f>(file: u64) -> Box<crate::fs_provider::OwnedFile<'f>> {
+        Box::<crate::fs_provider::OwnedFile<'f>>::from_raw(file as _)
+    }
+    fn add_open_obj_ptr(&self, obj: u64) {
+        self.open_objs
+            .insert(obj)
+            .expect("duplicate open objects must not exist");
+    }
+    // NOTE: Removes entries WITHOUT dropping
+    fn remove_open_obj_ptr(&self, obj: u64) {
+        self.open_objs
+            .remove(&obj)
+            .expect("object must exist in open objects list");
+    }
+    fn drop_open_objs(&mut self) {
+        self.open_objs.retain(|&k| {
+            let _ = unsafe { Self::u64_to_owned_file(k) };
+            false
+        });
+    }
 }
 
 unsafe impl Send for DokanFServer {}
@@ -141,6 +167,19 @@ impl Drop for DokanFServer {
             DokanCloseHandle(self.handle);
         }
         crate::util::real_wait(&self.shutdown_flag, 0);
+        // unsafe {
+        //     DokanRemoveMountPoint(widestring::u16cstr!("M:\\").as_ptr());
+        //     DokanWaitForFileSystemClosed(self.handle, INFINITE);
+        //     DokanCloseHandle(self.handle);
+        // }
+
+        if !self.open_objs.is_empty() {
+            log::warn!(
+                "Dokan did not properly cleanup resources ({} leaked). Cleaning up manually...",
+                self.open_objs.len()
+            );
+            self.drop_open_objs();
+        }
     }
 }
 

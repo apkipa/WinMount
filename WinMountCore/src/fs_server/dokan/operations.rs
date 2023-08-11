@@ -72,13 +72,17 @@ unsafe fn file_from_dokan_file_info<'f>(
 
 fn set_file_into_dokan_file_info(file: OwnedFile, dokan_file_info: &mut DOKAN_FILE_INFO) {
     drop_file_from_dokan_file_info(dokan_file_info);
-    dokan_file_info.Context = Box::into_raw(Box::new(file)) as _;
+    let file = super::DokanFServer::owned_file_to_u64(file);
+    server_from_dokan_file_info(dokan_file_info).add_open_obj_ptr(file);
+    dokan_file_info.Context = file;
 }
 fn drop_file_from_dokan_file_info(dokan_file_info: &mut DOKAN_FILE_INFO) {
     if dokan_file_info.Context == 0 {
         return;
     }
-    let _ = unsafe { Box::<OwnedFile>::from_raw(dokan_file_info.Context as _) };
+    let file = dokan_file_info.Context;
+    server_from_dokan_file_info(dokan_file_info).remove_open_obj_ptr(file);
+    let _ = unsafe { super::DokanFServer::u64_to_owned_file(file) };
     dokan_file_info.Context = 0;
 }
 
@@ -97,6 +101,11 @@ pub(super) extern "stdcall" fn create_file(
         let dokan_file_info = unsafe { &mut *dokan_file_info };
         let server = server_from_dokan_file_info(dokan_file_info);
         let file_name = unsafe { U16CStr::from_ptr_str(file_name) };
+
+        if log::log_enabled!(log::Level::Trace) {
+            log::trace!("Opening object `{}`", file_name.to_string_lossy());
+        }
+
         // Block access to system folders
         if file_name == u16cstr!("\\$RECYCLE.BIN")
             || file_name == u16cstr!("\\System Volume Information")
@@ -186,6 +195,11 @@ pub(super) extern "stdcall" fn create_file(
 
 pub(super) extern "stdcall" fn cleanup(file_name: LPCWSTR, dokan_file_info: PDOKAN_FILE_INFO) {
     wrap_unit_ffi(|| {
+        if log::log_enabled!(log::Level::Trace) {
+            let file_name = unsafe { U16CStr::from_ptr_str(file_name) };
+            log::trace!("Cleaning up object `{}`", file_name.to_string_lossy());
+        }
+
         let dokan_file_info = unsafe { &mut *dokan_file_info };
         if dokan_file_info.DeleteOnClose != 0 {
             drop_file_from_dokan_file_info(dokan_file_info);
@@ -195,6 +209,11 @@ pub(super) extern "stdcall" fn cleanup(file_name: LPCWSTR, dokan_file_info: PDOK
 
 pub(super) extern "stdcall" fn close_file(file_name: LPCWSTR, dokan_file_info: PDOKAN_FILE_INFO) {
     wrap_unit_ffi(|| {
+        if log::log_enabled!(log::Level::Trace) {
+            let file_name = unsafe { U16CStr::from_ptr_str(file_name) };
+            log::trace!("Closing object `{}`", file_name.to_string_lossy());
+        }
+
         let dokan_file_info = unsafe { &mut *dokan_file_info };
         drop_file_from_dokan_file_info(dokan_file_info);
     })
@@ -517,6 +536,8 @@ pub(super) extern "stdcall" fn mounted(
 
 pub(super) extern "stdcall" fn unmounted(dokan_file_info: PDOKAN_FILE_INFO) -> NTSTATUS {
     wrap_ffi(|| {
+        log::trace!("Unmounted Dokan drive");
+
         let dokan_file_info = unsafe { &mut *dokan_file_info };
         let server = server_from_dokan_file_info(dokan_file_info);
         server.shutdown_flag.store(1, Ordering::Release);

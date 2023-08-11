@@ -497,6 +497,19 @@ impl MemFsHandler {
     }
 }
 
+impl Drop for MemFsHandler {
+    fn drop(&mut self) {
+        if cfg!(debug_assertions) {
+            // Check if lifetime rules are violated
+            assert_eq!(
+                Arc::strong_count(&self.root_folder),
+                1,
+                "There shall not be outstanding references to children at this time"
+            );
+        }
+    }
+}
+
 impl MemFsFile<'_> {
     fn remove_from_parent(&self, obj_ptr: usize, parent: &mut FolderEntry) -> Option<Entry> {
         // TODO: Use references to names to improve delete performance and avoid extra copies

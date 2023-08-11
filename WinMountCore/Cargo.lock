@@ -22,6 +22,7 @@ dependencies = [
  "log",
  "netstat",
  "scanf",
+ "scc",
  "scopeguard",
  "serde",
  "serde_json",
@@ -1061,6 +1062,12 @@ checksum = "1af23b806e681b4f838a9887655219b755a418f60353968a88b0b87a35b3e8ce"
 dependencies = [
  "nom",
 ]
+
+[[package]]
+name = "scc"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67822f2999ca7d9762bedd929f6dd231cb66e51a072725d05954cd622ba7ae4c"
 
 [[package]]
 name = "scopeguard"

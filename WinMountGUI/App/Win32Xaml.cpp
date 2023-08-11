@@ -524,13 +524,16 @@ auto get_resize_frame_horizontal_for_dpi(unsigned dpi) {
         GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi);
 }
 
-void populate_1x1_bgra_premul_dcomp_surface(IDCompositionSurface* dcomp_surface, winrt::Windows::UI::Color color) {
-    auto begin_draw_fn = [&](RECT const* updateRect, POINT* updateOffset, IID const& iid, void** updateObject) {
-        return dcomp_surface->BeginDraw(updateRect, iid, updateObject, updateOffset);
+auto MakeDCompSurfBDCompatShim(IDCompositionSurface* dcompSurface) {
+    return [=](RECT const* updateRect, POINT* updateOffset, IID const& iid, void** updateObject) {
+        return dcompSurface->BeginDraw(updateRect, iid, updateObject, updateOffset);
     };
+}
+
+void populate_1x1_bgra_premul_dcomp_surface(IDCompositionSurface* dcomp_surface, winrt::Windows::UI::Color color) {
     POINT update_offset;
     winrt::com_ptr<ID3D11Texture2D> d3d11_texture2d;
-    d3d11_texture2d.capture(begin_draw_fn, nullptr, &update_offset);
+    d3d11_texture2d.capture(MakeDCompSurfBDCompatShim(dcomp_surface), nullptr, &update_offset);
     D3D11_BOX dest_box;
     dest_box.front = 0;
     dest_box.back = 1;
@@ -2126,6 +2129,7 @@ namespace winrt::Win32Xaml::implementation {
         RECT rt;
         GetClientRect(m_root_hwnd, &rt);
         rt.top = this->GetClientTopPadding();
+        // TODO: Double check whether this is exact UWP metrics
         SIZE sz_caption_btn{
             MulDiv(CAPTION_BUTTON_WIDTH, m_dpi, 96) - 1, MulDiv(CAPTION_BUTTON_HEIGHT, m_dpi, 96)
         };
@@ -2218,12 +2222,9 @@ namespace winrt::Win32Xaml::implementation {
             break;
         }
 
-        auto begin_draw_fn = [&](RECT const* updateRect, POINT* updateOffset, IID const& iid, void** updateObject) {
-            return dcomp_surface->BeginDraw(updateRect, iid, updateObject, updateOffset);
-        };
         POINT update_offset;
         winrt::com_ptr<IDXGISurface1> dxgi_surface;
-        dxgi_surface.capture(begin_draw_fn, nullptr, &update_offset);
+        dxgi_surface.capture(MakeDCompSurfBDCompatShim(dcomp_surface), nullptr, &update_offset);
         HDC hdc;
         RECT draw_rt = m_rt_caption_button;
         OffsetRect(&draw_rt, update_offset.x, update_offset.y);
