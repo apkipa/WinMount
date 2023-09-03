@@ -1,8 +1,15 @@
 // For consumption over WinMount.App.Pages
 namespace WinMount.App.Pages {
+    struct SemVersion {
+        UInt32 Major, Minor, Patch;
+    };
+
     runtimeclass FspItem {
         Guid Id{ get; };
         String Name{ get; };
+        SemVersion Version{ get; };
+        Windows.Data.Json.JsonValue TemplateConfig{ get; };
+        Boolean IsHidden{ get; };
     };
     runtimeclass FsItem : Windows.UI.Xaml.Data.INotifyPropertyChanged {
         Guid Id{ get; };
@@ -10,11 +17,14 @@ namespace WinMount.App.Pages {
         Guid KindId{ get; };
         String KindDisplayName{ get; };
         Boolean IsRunning{ get; };
+        Boolean IsGlobal{ get; };
         String StartStopButton_Text{ get; };
     };
     runtimeclass FsrvpItem {
         Guid Id{ get; };
         String Name{ get; };
+        SemVersion Version{ get; };
+        Windows.Data.Json.JsonValue TemplateConfig{ get; };
     };
     runtimeclass FsrvItem : Windows.UI.Xaml.Data.INotifyPropertyChanged {
         Guid Id{ get; };
@@ -34,6 +44,9 @@ namespace WinMount.App.Pages {
         IObservableVector<Object> FsItems{ get; };
         IObservableVector<Object> FsrvpItems{ get; };
         IObservableVector<Object> FsrvItems{ get; };
+
+        IObservableVector<Object> FspItemsNoHidden{ get; };
+        IObservableVector<Object> FsItemsNoGlobal{ get; };
 
         // Methods
         Windows.Foundation.IAsyncAction ReloadFsItemsAsync();

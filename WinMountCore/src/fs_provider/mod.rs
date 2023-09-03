@@ -1,22 +1,18 @@
 mod adbfs;
 mod archivefs;
+pub mod local;
 pub mod memfs;
 mod overlayfs;
 
-use std::{
-    collections::HashMap,
-    marker::PhantomData,
-    num::NonZeroUsize,
-    ops::Deref,
-    sync::{Arc, RwLock},
-    time::SystemTime,
-};
+use std::{sync::Arc, time::SystemTime};
 
 use bitflags::bitflags;
 use uuid::Uuid;
 
 #[derive(thiserror::Error, Debug)]
 pub enum FileSystemError {
+    #[error("other error")]
+    Other(#[from] anyhow::Error),
     #[error("the path does not exist")]
     ObjectPathNotFound,
     #[error("the requested operation is not implemented")]
@@ -98,6 +94,12 @@ impl<'a> SegPath<'a> {
             path: path.strip_prefix(delimiter.as_char()).unwrap_or(path),
             delimiter,
         }
+    }
+    pub fn get_path(&self) -> &'a str {
+        self.path
+    }
+    pub fn get_delimiter(&self) -> PathDelimiter {
+        self.delimiter
     }
     fn iter(&self) -> SegPathIter<'a> {
         // TODO: Use self.path.split() instead?
@@ -265,11 +267,25 @@ pub struct FileStatInfo {
 }
 
 pub trait FilePattern {
+    // Returns true if name matches pattern
     fn check_name(&self, name: &str) -> bool;
+    // NOTE: If you implement this method, the returned pattern string
+    //       must conform to the rules of FsRtlIsNameInExpression;
+    //       if it is unrepresentable, then don't implement this method.
+    fn get_pattern_str(&self) -> Option<&str> {
+        None
+    }
 }
 
 pub trait WideFilePattern {
+    // Returns true if name matches pattern
     fn check_name(&self, name: &widestring::U16CStr) -> bool;
+    // NOTE: If you implement this method, the returned pattern string
+    //       must conform to the rules of FsRtlIsNameInExpression;
+    //       if it is unrepresentable, then don't implement this method.
+    fn get_pattern_str(&self) -> Option<&widestring::U16CStr> {
+        None
+    }
 }
 
 pub struct AcceptAllFilePattern {}
@@ -282,10 +298,16 @@ impl FilePattern for AcceptAllFilePattern {
     fn check_name(&self, name: &str) -> bool {
         true
     }
+    fn get_pattern_str(&self) -> Option<&str> {
+        Some("*")
+    }
 }
 impl WideFilePattern for AcceptAllFilePattern {
     fn check_name(&self, name: &widestring::U16CStr) -> bool {
         true
+    }
+    fn get_pattern_str(&self) -> Option<&widestring::U16CStr> {
+        Some(widestring::u16cstr!("*"))
     }
 }
 
@@ -345,11 +367,15 @@ pub trait File: Sync {
     ) -> FileSystemResult<()> {
         struct ToWideFilePatternWrapper<'a> {
             pattern: &'a dyn WideFilePattern,
+            pattern_str: Option<String>,
         }
         impl FilePattern for ToWideFilePatternWrapper<'_> {
             fn check_name(&self, name: &str) -> bool {
                 let name = widestring::U16CString::from_str_truncate(name);
                 self.pattern.check_name(&name)
+            }
+            fn get_pattern_str(&self) -> Option<&str> {
+                self.pattern_str.as_deref()
             }
         }
         struct ToWideFindFilesDataFillerWrapper<'a> {
@@ -361,7 +387,11 @@ pub trait File: Sync {
                 self.filler.fill_data(&name, stat)
             }
         }
-        let pattern = ToWideFilePatternWrapper { pattern };
+        let pattern_str = pattern.get_pattern_str().map(|s| s.to_string_lossy());
+        let pattern = ToWideFilePatternWrapper {
+            pattern,
+            pattern_str,
+        };
         let mut filler = ToWideFindFilesDataFillerWrapper { filler };
         self.find_files_with_pattern(&pattern, &mut filler)
     }
@@ -434,6 +464,8 @@ bitflags! {
         const Write = 0x40000000;
         const Execute = 0x20000000;
         const Full = 0x10000000;
+        const Delete = 0x10000;
+        const ListDirectory = 0x1;
         const ReadWrite = Self::Read.bits() | Self::Write.bits();
     }
 
@@ -471,6 +503,7 @@ impl FileAttributes {
     }
 }
 
+// TODO: Do we need SUPERSEDE semantics for FileCreateDisposition?
 #[repr(u32)]
 pub enum FileCreateDisposition {
     CreateNew = 1,
@@ -491,6 +524,8 @@ pub struct FileSystem {
 pub enum FileSystemCreationError {
     #[error("the filesystem is not found")]
     NotFound,
+    #[error("the provided configuration is invalid: {0}")]
+    InvalidConfig(String),
     #[error("the filesystem depends on itself in some way, preventing the creation")]
     CyclicDependency,
     #[error("the filesystem configuration is invalid")]
@@ -510,11 +545,14 @@ pub trait FileSystemCreationContext {
 pub trait FsProvider: Send {
     fn get_id(&self) -> Uuid;
     fn get_name(&self) -> &'static str;
+    // Follows SemVer
+    fn get_version(&self) -> (u32, u32, u32);
     fn construct(
         &self,
         config: serde_json::Value,
         ctx: &mut dyn FileSystemCreationContext,
     ) -> Result<Arc<dyn FileSystemHandler>, FileSystemCreationError>;
+    fn get_template_config(&self) -> serde_json::Value;
 }
 
 pub fn init_fs_providers(
@@ -522,6 +560,7 @@ pub fn init_fs_providers(
 ) -> anyhow::Result<()> {
     let mut reg = |p: Box<dyn FsProvider>| register_fn(p.get_id(), p);
     reg(Box::new(memfs::MemFsProvider::new()))?;
+    reg(Box::new(local::LocalFsProvider::new()))?;
     Ok(())
 }
 

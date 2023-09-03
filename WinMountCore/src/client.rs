@@ -162,9 +162,12 @@ pub(super) async fn handle_client_cli(
             let params = serde_json::Value::Null;
             let resp = ws_send_request(&mut ws, "list-fs", params).await?;
             let resp: Response = serde_json::from_value(resp)?;
-            println!("Id | Name | Kind Id | Is Running");
+            println!("Id | Name | Kind Id | Is Running | Is Global");
             for i in resp.fs_list {
-                println!("{} | {} | {} | {}", i.id, i.name, i.kind_id, i.is_running);
+                println!(
+                    "{} | {} | {} | {} | {}",
+                    i.id, i.name, i.kind_id, i.is_running, i.is_global
+                );
             }
         }
         AppCommands::ListFsp { id: Some(id) } => {

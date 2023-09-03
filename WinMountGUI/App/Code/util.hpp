@@ -1410,8 +1410,11 @@ namespace util {
             typed_task_storage() : m_data(std::make_shared<data>()) {}
 
             struct task_wrapper {
-                task_wrapper(std::shared_ptr<data> data, bool has_ownership) :
-                    m_data(std::move(data)), m_has_ownership(has_ownership) {}
+                task_wrapper(std::shared_ptr<data> data, bool has_ownership, T&& task_copy) :
+                    m_data(std::move(data)), m_has_ownership(has_ownership),
+                    m_task_copy(std::move(task_copy)) {}
+                task_wrapper(task_wrapper const& other) = delete;
+                task_wrapper(task_wrapper&& other) = delete;
 
                 ~task_wrapper() {
                     if (m_has_ownership) {
@@ -1420,10 +1423,11 @@ namespace util {
                     }
                 }
 
-                T operator co_await() const { return m_data->task; }
+                T operator co_await() const { return m_task_copy; }
 
             private:
                 std::shared_ptr<data> m_data;
+                T m_task_copy;
                 bool m_has_ownership;
             };
 
@@ -1435,11 +1439,12 @@ namespace util {
                     std::scoped_lock guard(m_data->lock);
                     task = m_data->task;
                     if (!task) {
-                        task = m_data->task = std::invoke(std::forward<Functor>(functor), std::forward<Args>(args)...);
+                        task = std::invoke(std::forward<Functor>(functor), std::forward<Args>(args)...);
+                        m_data->task = task;
                         owns_task = true;
                     }
                 }
-                return { m_data, owns_task };
+                return { m_data, owns_task, std::move(task) };
             }
         };
 
@@ -1742,6 +1747,7 @@ namespace util {
         // ~~NOTE: It is safe to destroy a locked mutex!~~
         // TODO: Maybe optimize async waiting performance
         // TODO: Rewrite using srwlock to avoid UB
+        // TODO: Support cancellation if possible
         struct mutex {
             mutex() {}
             void lock(void) { m_mutex.lock(); }
@@ -1999,6 +2005,248 @@ namespace util {
             sv.AddHandler(UIElement::PointerReleasedEvent(), boxed_stop_handler, true);
             sv.AddHandler(UIElement::PointerCanceledEvent(), boxed_stop_handler, true);
         }
+
+#if 1
+        // Workarounds C3779: a function that returns 'auto' cannot be used before it is defined
+        namespace details {
+            // TODO: There seems to be a bug preventing us from using e.CollectionChange()
+            //       directly in QueryObservableVector::SourceVectorChanged, however by
+            //       defining this function without using it, the issue disappears. Double
+            //       check and report this in the future.
+            static inline auto IVectorChangedEventArgs_CollectionChange(
+                ::winrt::Windows::Foundation::Collections::IVectorChangedEventArgs const& e
+            ) {
+                return e.CollectionChange();
+            }
+        }
+#endif
+
+        // TODO: Support GROUP BY clause
+        // TODO: Don't use a intermediate IObservableVector; store processed
+        //       indices instead
+        // IObservableVector with query support; primarily for list controls
+        // WARN: You must ensure there are no possible contentions (TOCTTOU)
+        template<typename T>
+        struct QueryObservableVector : ::winrt::implements<QueryObservableVector<T>,
+            ::winrt::Windows::Foundation::Collections::IObservableVector<T>,
+            ::winrt::Windows::Foundation::Collections::IIterable<T>,
+            ::winrt::Windows::Foundation::Collections::IVector<T>>
+        {
+            using SourceVectorType = ::winrt::Windows::Foundation::Collections::IObservableVector<T>;
+            // For sorting purpose; see https://en.cppreference.com/w/cpp/named_req/Compare
+            using CompareFn = bool(T const&, T const&);
+            // For filtering purpose; returns false for unwanted items
+            using FilterFn = bool(T const&);
+
+            QueryObservableVector(SourceVectorType const& source,
+                std::function<CompareFn> compare_fn,
+                std::function<FilterFn> filter_fn) :
+                m_source(source), m_vec(nullptr),
+                m_compare_fn(std::move(compare_fn)), m_filter_fn(std::move(filter_fn))
+            {
+                // Load existing data
+                std::vector<T> data(m_source.Size());
+                // NOTE: Deliberately ignores return value
+                m_source.GetMany(0, data);
+                if (m_filter_fn) {
+                    std::erase_if(data, [this](T const& v) { return !m_filter_fn(v); });
+                }
+                if (m_compare_fn) {
+                    std::sort(data.begin(), data.end(), m_compare_fn);
+                }
+                m_vec = ::winrt::single_threaded_observable_vector<T>(std::move(data));
+
+                // Listen for source events
+                m_et_source_vector_updated = m_source.VectorChanged(
+                    { this, &QueryObservableVector::SourceVectorChanged });
+            }
+            ~QueryObservableVector() {
+                m_source.VectorChanged(m_et_source_vector_updated);
+            }
+
+            // Local
+            void UpdateCompare(std::function<CompareFn> compare_fn) {
+                m_compare_fn = std::move(compare_fn);
+                this->Flush();
+            }
+            void UpdateFilter(std::function<FilterFn> filter_fn) {
+                m_filter_fn = std::move(filter_fn);
+                this->Flush();
+            }
+            void Flush() {
+                // TODO: Flush
+                std::vector<T> data(m_source.Size());
+                // NOTE: Deliberately ignores return value
+                m_source.GetMany(0, data);
+                if (m_filter_fn) {
+                    std::erase_if(data, [this](T const& v) { return !m_filter_fn(v); });
+                }
+                if (m_compare_fn) {
+                    std::sort(data.begin(), data.end(), m_compare_fn);
+                }
+                // TODO: Use multiple calls & checks for possibly better transitions & animations
+                m_vec.ReplaceAll(data);
+            }
+
+            // IIterable<T>
+            ::winrt::Windows::Foundation::Collections::IIterator<T> First() {
+                return m_vec.First();
+            }
+
+            // IVector<T>
+            void SetAt(uint32_t const index, T const& value) {
+                throw ::winrt::hresult_not_implemented(
+                    L"QueryObservableVector does not implement modification functions");
+            }
+            void InsertAt(uint32_t const index, T const& value) {
+                throw ::winrt::hresult_not_implemented(
+                    L"QueryObservableVector does not implement modification functions");
+            }
+            void RemoveAt(uint32_t const index) {
+                throw ::winrt::hresult_not_implemented(
+                    L"QueryObservableVector does not implement modification functions");
+            }
+            void Append(T const& value) {
+                throw ::winrt::hresult_not_implemented(
+                    L"QueryObservableVector does not implement modification functions");
+            }
+            void RemoveAtEnd() {
+                throw ::winrt::hresult_not_implemented(
+                    L"QueryObservableVector does not implement modification functions");
+            }
+            void Clear() {
+                throw ::winrt::hresult_not_implemented(
+                    L"QueryObservableVector does not implement modification functions");
+            }
+            void ReplaceAll(::winrt::array_view<T const> value) {
+                throw ::winrt::hresult_not_implemented(
+                    L"QueryObservableVector does not implement modification functions");
+            }
+            ::winrt::Windows::Foundation::Collections::IVectorView<T> GetView() {
+                return m_vec.GetView();
+            }
+            T GetAt(uint32_t const index) const {
+                return m_vec.GetAt(index);
+            }
+            uint32_t Size() const noexcept {
+                return m_vec.Size();
+            }
+            bool IndexOf(T const& value, uint32_t& index) const noexcept {
+                return m_vec.IndexOf(value, index);
+            }
+            uint32_t GetMany(uint32_t const startIndex, ::winrt::array_view<T> values) const {
+                return m_vec.GetMany(startIndex, values);
+            }
+
+            // IObservableVector<T>
+            ::winrt::event_token VectorChanged(
+                ::winrt::Windows::Foundation::Collections::VectorChangedEventHandler<T> const& handler
+            ) {
+                //return m_changed.add(handler);
+                return m_vec.VectorChanged(handler);
+            }
+            void VectorChanged(::winrt::event_token const token) {
+                //m_changed.remove(token);
+                return m_vec.VectorChanged(token);
+            }
+
+        private:
+            void SourceVectorChanged(SourceVectorType const&,
+                ::winrt::Windows::Foundation::Collections::IVectorChangedEventArgs const& e
+            ) {
+                using ::winrt::Windows::Foundation::Collections::CollectionChange;
+
+                auto index_of_fn = [this](T const& value, uint32_t& index) {
+                    if (m_compare_fn) {
+                        auto ib = m_vec.begin();
+                        auto ie = m_vec.end();
+                        auto it = std::lower_bound(ib, ie, value, m_compare_fn);
+                        for (; it != ie && !m_compare_fn(value, *it); ++it) {
+                            if (*it == value) {
+                                index = static_cast<uint32_t>(std::distance(ib, it));
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
+                    else {
+                        return m_vec.IndexOf(value, index);
+                    }
+                };
+                auto ordered_insert_fn = [this](T const& value) {
+                    auto ib = m_vec.begin();
+                    auto index = static_cast<uint32_t>(std::upper_bound(
+                        ib, m_vec.end(), value, m_compare_fn) - ib);
+                    m_vec.InsertAt(index, value);
+                };
+
+                // TODO: It is too late to know about the removed item, so we are
+                //       forced to flush the whole vector; maybe optimize this
+                //       in the future. (we can still handle
+                //       CollectionChange::ItemInserted, though)
+
+                if (e.CollectionChange() == CollectionChange::ItemInserted) {
+                    T item = m_source.GetAt(e.Index());
+                    if (!m_filter_fn || m_filter_fn(item)) {
+                        if (m_compare_fn) {
+                            ordered_insert_fn(item);
+                        }
+                        else {
+                            // TODO: Guarantee the same order as source
+                            m_vec.Append(item);
+                        }
+                    }
+                }
+                else {
+                    this->Flush();
+                }
+
+                /*
+                switch (e.CollectionChange()) {
+                case CollectionChange::ItemChanged: {
+                    T item = m_source.GetAt(e.Index());
+                    if (uint32_t index; index_of_fn(item, index)) {
+                        m_vec.RemoveAt(index);
+                    }
+                    if (!m_filter_fn || m_filter_fn(item)) {
+                        if (m_compare_fn) {
+                            ordered_insert_fn(item);
+                        }
+                        else {
+                            // TODO: Guarantee the same order as source
+                            m_vec.Append(item);
+                        }
+                    }
+                    break;
+                }
+                case CollectionChange::ItemInserted:
+                    // TODO...
+                    break;
+                case CollectionChange::ItemRemoved: {
+                    T item = m_source.GetAt(e.Index());
+                    if (uint32_t index; index_of_fn(item, index)) {
+                        m_vec.RemoveAt(index);
+                    }
+                    break;
+                }
+                case CollectionChange::Reset:
+                default:
+                    this->Flush();
+                    break;
+                }
+                */
+            }
+
+            SourceVectorType m_source;
+            SourceVectorType m_vec;
+
+            std::function<CompareFn> m_compare_fn;
+            std::function<FilterFn> m_filter_fn;
+
+            ::winrt::event_token m_et_source_vector_updated;
+
+            //::winrt::event<::winrt::Windows::Foundation::Collections::VectorChangedEventHandler<T>> m_changed;
+        };
     }
 
     namespace sync {

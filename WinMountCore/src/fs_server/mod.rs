@@ -10,11 +10,14 @@ pub trait FileSystemServer: Send + Sync {}
 pub trait FsServerProvider: Send {
     fn get_id(&self) -> Uuid;
     fn get_name(&self) -> &'static str;
+    // Follows SemVer
+    fn get_version(&self) -> (u32, u32, u32);
     fn construct(
         &self,
         fs: Arc<dyn crate::fs_provider::FileSystemHandler>,
         config: serde_json::Value,
     ) -> anyhow::Result<Arc<dyn FileSystemServer>>;
+    fn get_template_config(&self) -> serde_json::Value;
 }
 
 pub fn init_fs_server_providers(

@@ -183,6 +183,11 @@ impl Drop for DokanFServer {
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DokanFServerConfig {
+    mount_point: String,
+}
+
 pub struct DokanFServerProvider {}
 impl super::FsServerProvider for DokanFServerProvider {
     fn get_id(&self) -> Uuid {
@@ -191,13 +196,25 @@ impl super::FsServerProvider for DokanFServerProvider {
     fn get_name(&self) -> &'static str {
         "Dokan Disk Mounter"
     }
+    fn get_version(&self) -> (u32, u32, u32) {
+        (0, 1, 0)
+    }
     fn construct(
         &self,
         fs: Arc<dyn crate::fs_provider::FileSystemHandler>,
         config: serde_json::Value,
     ) -> anyhow::Result<Arc<dyn FileSystemServer>> {
+        // TODO: Reject when requested mount point has been taken
         let result = DokanFServer::new(widestring::u16cstr!("M:\\"), fs)?;
         Ok(result)
+    }
+    fn get_template_config(&self) -> serde_json::Value {
+        // NOTE: We should not allow user to use a spare mount point when
+        //       the specified one has been taken
+        serde_json::to_value(DokanFServerConfig {
+            mount_point: "M:\\".to_owned(),
+        })
+        .unwrap()
     }
 }
 

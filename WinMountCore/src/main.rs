@@ -19,7 +19,7 @@ use std::{
 use anyhow::Context;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use uuid::{uuid, Uuid};
 
 use crate::fs_provider::FileSystemCreationContext;
 
@@ -68,15 +68,17 @@ struct FSInfo {
     name: String,
     kind_id: Uuid,
     handler: Option<Arc<dyn fs_provider::FileSystemHandler>>,
+    is_global: bool,
     config: serde_json::Value,
 }
 impl FSInfo {
-    fn new(name: String, kind_id: Uuid) -> Self {
+    fn new(name: String, kind_id: Uuid, is_global: bool) -> Self {
         Self {
             name,
             kind_id,
             handler: None,
             config: serde_json::Value::Null,
+            is_global,
         }
     }
 }
@@ -100,8 +102,13 @@ impl FServerInfo {
     }
 }
 
+struct FsProviderInfo {
+    provider: Box<dyn fs_provider::FsProvider>,
+    is_hidden: bool,
+}
+
 struct AppContext {
-    fs_providers: HashMap<Uuid, Box<dyn fs_provider::FsProvider>>,
+    fs_providers: HashMap<Uuid, FsProviderInfo>,
     fs_server_providers: HashMap<Uuid, Box<dyn fs_server::FsServerProvider>>,
     filesystems: HashMap<Uuid, FSInfo>,
     filesystem_servers: HashMap<Uuid, FServerInfo>,
@@ -124,11 +131,15 @@ struct ListFileSystemItemData {
     name: String,
     kind_id: Uuid,
     is_running: bool,
+    is_global: bool,
 }
 #[derive(Serialize, Deserialize)]
 struct ListFileSystemProviderItemData {
     id: Uuid,
     name: String,
+    version: (u32, u32, u32),
+    template_config: serde_json::Value,
+    is_hidden: bool,
 }
 #[derive(Serialize, Deserialize)]
 struct ListFServerItemData {
@@ -142,12 +153,15 @@ struct ListFServerItemData {
 struct ListFServerProviderItemData {
     id: Uuid,
     name: String,
+    version: (u32, u32, u32),
+    template_config: serde_json::Value,
 }
 #[derive(Serialize, Deserialize)]
 struct GetFileSystemInfoData {
     name: String,
     kind_id: Uuid,
     is_running: bool,
+    is_global: bool,
     config: serde_json::Value,
 }
 #[derive(Serialize, Deserialize)]
@@ -159,6 +173,29 @@ struct GetFServerInfoData {
     config: serde_json::Value,
 }
 impl AppContext {
+    fn private_create_global_fs(
+        &mut self,
+        id: Uuid,
+        name: String,
+        kind_id: Uuid,
+        config: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        use std::collections::hash_map::Entry::*;
+        let fs_info = FSInfo {
+            name,
+            kind_id,
+            handler: None,
+            is_global: true,
+            config,
+        };
+        match self.filesystems.entry(id) {
+            Occupied(_) => anyhow::bail!("found duplicate global filesystem id"),
+            Vacant(e) => {
+                e.insert(fs_info);
+            }
+        }
+        Ok(())
+    }
     fn create_fs(
         &mut self,
         name: String,
@@ -170,6 +207,7 @@ impl AppContext {
             name,
             kind_id,
             handler: None,
+            is_global: false,
             config,
         };
         Ok(loop {
@@ -301,6 +339,7 @@ impl AppContext {
                 kind_id: fs_info.kind_id,
                 name: fs_info.name.clone(),
                 is_running: fs_info.handler.is_some(),
+                is_global: fs_info.is_global,
             })
             .collect())
     }
@@ -310,7 +349,10 @@ impl AppContext {
             .iter()
             .map(|(id, fsp)| ListFileSystemProviderItemData {
                 id: *id,
-                name: fsp.get_name().to_owned(),
+                name: fsp.provider.get_name().to_owned(),
+                version: fsp.provider.get_version(),
+                template_config: fsp.provider.get_template_config(),
+                is_hidden: fsp.is_hidden,
             })
             .collect())
     }
@@ -334,6 +376,8 @@ impl AppContext {
             .map(|(id, fsrvp)| ListFServerProviderItemData {
                 id: *id,
                 name: fsrvp.get_name().to_owned(),
+                version: fsrvp.get_version(),
+                template_config: fsrvp.get_template_config(),
             })
             .collect())
     }
@@ -343,6 +387,7 @@ impl AppContext {
             name: fs_info.name.clone(),
             kind_id: fs_info.kind_id,
             is_running: fs_info.handler.is_some(),
+            is_global: fs_info.is_global,
             config: fs_info.config.clone(),
         })
     }
@@ -398,7 +443,7 @@ impl AppContext {
 }
 
 struct AppContextForCreation<'a> {
-    fs_providers: &'a HashMap<Uuid, Box<dyn fs_provider::FsProvider>>,
+    fs_providers: &'a HashMap<Uuid, FsProviderInfo>,
     fs_server_providers: &'a HashMap<Uuid, Box<dyn fs_server::FsServerProvider>>,
     filesystems: &'a mut HashMap<Uuid, FSInfo>,
     filesystem_servers: &'a mut HashMap<Uuid, FServerInfo>,
@@ -474,7 +519,9 @@ impl FileSystemCreationContext for AppContextForCreation<'_> {
                 .fs_providers
                 .get(&fs_info.kind_id)
                 .ok_or(FileSystemCreationError::InvalidFileSystem)?;
-            let fs_handler = fs_provider.construct(fs_info.config.clone(), *this)?;
+            let fs_handler = fs_provider
+                .provider
+                .construct(fs_info.config.clone(), *this)?;
             // drop(fs_info);
             fs_info = this
                 .filesystems
@@ -497,8 +544,25 @@ async fn shutdown_signal(shutdown_notify: &tokio::sync::Notify) {
     }
 }
 
+const HIDDEN_FS_PROVIDER_LIST: &[Uuid] = &[fs_provider::local::LOCALFS_ID];
+
+const GLOBAL_FS_LOCALFS_ID: Uuid = uuid!("96DD6C88-CDB5-4446-8269-104F2DD82ACD");
+
 async fn run_loop(mut app_ctx: AppContext, server_addr: SocketAddr) -> anyhow::Result<()> {
     log::warn!("Starting WinMountCore daemon...");
+
+    // Create global filesystems
+    let mut create_global_fs_and_run_fn = |id, name, kind_id, config| -> anyhow::Result<()> {
+        app_ctx.private_create_global_fs(id, name, kind_id, config)?;
+        app_ctx.start_fs(id)?;
+        Ok(())
+    };
+    create_global_fs_and_run_fn(
+        GLOBAL_FS_LOCALFS_ID,
+        "local".to_owned(),
+        fs_provider::local::LOCALFS_ID,
+        serde_json::Value::Null,
+    )?;
 
     log::info!("Now listening on {server_addr}");
     let shutdown_notify = Arc::new(tokio::sync::Notify::new());
@@ -642,7 +706,11 @@ fn main() -> anyhow::Result<()> {
                 match app_ctx.fs_providers.entry(id) {
                     Occupied(_) => anyhow::bail!("filesystem provider id was already taken"),
                     Vacant(e) => {
-                        e.insert(p);
+                        let info = FsProviderInfo {
+                            provider: p,
+                            is_hidden: HIDDEN_FS_PROVIDER_LIST.contains(&id),
+                        };
+                        e.insert(info);
                         Ok(())
                     }
                 }

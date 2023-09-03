@@ -9,7 +9,14 @@ using namespace winrt;
 using namespace winrt::Windows::Foundation;
 
 namespace winrt::WinMount::App::Pages::implementation {
-    MainViewModel::MainViewModel(::WinMount::WinMountClient const& client) : m_client(client) {}
+    MainViewModel::MainViewModel(::WinMount::WinMountClient const& client) : m_client(client) {
+        m_fsp_items_no_hidden = make_self<GenericQueryObservableVector>(m_fsp_items, nullptr,
+            [](IInspectable const& v) { return !v.as<WinMount::App::Pages::FspItem>().IsHidden(); }
+        );
+        m_fs_items_no_global = make_self<GenericQueryObservableVector>(m_fs_items, nullptr,
+            [](IInspectable const& v) { return !v.as<WinMount::App::Pages::FsItem>().IsGlobal(); }
+        );
+    }
     hstring MainViewModel::GetFspNameFromId(guid const& id) {
         for (auto const& fsp : m_fsp_list) {
             if (id == fsp.id) {
@@ -68,19 +75,6 @@ namespace winrt::WinMount::App::Pages::implementation {
 
         m_fs_list = co_await m_client.list_fs();
         for (auto const& i : m_fs_list) {
-            /*
-            hstring kind_disp_name{};
-            for (auto const& fsp : m_fsp_list) {
-                if (i.kind_id == fsp.id) {
-                    kind_disp_name = fsp.name;
-                    break;
-                }
-            }
-            if (kind_disp_name.empty()) {
-                kind_disp_name = L"<" + util::winrt::to_wstring(i.kind_id) + L">";
-            }
-            m_fs_items.Append(make<FsItem>(i, kind_disp_name));
-            */
             m_fs_items.Append(make<FsItem>(i, this->GetFspNameFromId(i.kind_id)));
         }
     }

@@ -35,3 +35,4 @@ tokio-tungstenite = "0.20.0"
 hyper = { version = "0.14.27", features = ["client"] }
 netstat = "0.7.0"
 scc = "2.0.0"
+windows = { version = "0.51.1", features = ["Wdk_Storage_FileSystem", "Wdk_System_SystemServices", "Win32_System_Threading", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Wdk_Foundation", "Win32_Foundation", "Win32_System_WindowsProgramming"] }

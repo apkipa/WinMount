@@ -9,9 +9,9 @@ use winapi::shared::ntdef::{LONGLONG, LPWSTR, PULONGLONG};
 use winapi::um::fileapi::{BY_HANDLE_FILE_INFORMATION, LPBY_HANDLE_FILE_INFORMATION};
 use winapi::um::minwinbase::WIN32_FIND_DATAW;
 use winapi::um::winnt::{
-    FILE_APPEND_DATA, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL,
-    FILE_ATTRIBUTE_READONLY, FILE_EXECUTE, FILE_READ_DATA, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, FILE_WRITE_DATA,
+    DELETE, FILE_APPEND_DATA, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN,
+    FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_READONLY, FILE_EXECUTE, FILE_LIST_DIRECTORY,
+    FILE_READ_DATA, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_DATA,
 };
 use winapi::{
     shared::{
@@ -167,6 +167,12 @@ pub(super) extern "stdcall" fn create_file(
             }
             if (desired_access & FILE_EXECUTE) != 0 {
                 x |= FileDesiredAccess::Execute;
+            }
+            if (desired_access & DELETE) != 0 {
+                x |= FileDesiredAccess::Delete;
+            }
+            if (desired_access & FILE_LIST_DIRECTORY) != 0 {
+                x |= FileDesiredAccess::ListDirectory;
             }
             x
         };

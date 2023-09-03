@@ -1,6 +1,7 @@
 use std::{
     borrow::Borrow,
     collections::BTreeMap,
+    num::NonZeroUsize,
     ops::Deref,
     sync::{Arc, RwLock},
     time::SystemTime,
@@ -799,6 +800,13 @@ impl Drop for MemFsFile<'_> {
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct MemfsConfig {
+    // TODO: MemfsConfig
+    // capacity: Option<NonZeroUsize>,
+    // no_swap: bool,
+}
+
 pub struct MemFsProvider {}
 impl super::FsProvider for MemFsProvider {
     fn get_id(&self) -> Uuid {
@@ -807,12 +815,18 @@ impl super::FsProvider for MemFsProvider {
     fn get_name(&self) -> &'static str {
         "memfs"
     }
+    fn get_version(&self) -> (u32, u32, u32) {
+        (0, 1, 0)
+    }
     fn construct(
         &self,
         config: serde_json::Value,
         ctx: &mut dyn super::FileSystemCreationContext,
     ) -> Result<Arc<dyn FileSystemHandler>, super::FileSystemCreationError> {
         Ok(Arc::new(MemFsHandler::new()))
+    }
+    fn get_template_config(&self) -> serde_json::Value {
+        serde_json::to_value(MemfsConfig {}).unwrap()
     }
 }
 

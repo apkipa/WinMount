@@ -9,11 +9,16 @@
 #include "WinMountClient.hpp"
 #include "util.hpp"
 
+static constexpr winrt::guid GLOBAL_FS_LOCALFS_ID{ "96DD6C88-CDB5-4446-8269-104F2DD82ACD" };
+
 namespace winrt::WinMount::App::Pages::implementation {
     struct FspItem : FspItemT<FspItem> {
         FspItem(::WinMount::ListFileSystemProviderItemData const& data) : m_data(data) {}
         guid Id() { return m_data.id; }
         hstring Name() { return m_data.name; }
+        SemVersion Version() { return { m_data.version[0], m_data.version[1], m_data.version[2] }; }
+        Windows::Data::Json::JsonValue TemplateConfig() { return m_data.template_config; }
+        bool IsHidden() { return m_data.is_hidden; }
     private:
         ::WinMount::ListFileSystemProviderItemData m_data;
     };
@@ -43,6 +48,7 @@ namespace winrt::WinMount::App::Pages::implementation {
                 m_PropertyChanged(*this, PropertyChangedEventArgs{ L"StartStopButton_Text" });
             }
         }
+        bool IsGlobal() { return m_data.is_global; }
         hstring StartStopButton_Text() {
             // 0xE768: Play, 0xE71A: Stop
             static constexpr wchar_t STR_PLAY[] = L"\xE768", STR_STOP[] = L"\xE71A";
@@ -60,6 +66,8 @@ namespace winrt::WinMount::App::Pages::implementation {
         FsrvpItem(::WinMount::ListFServerProviderItemData const& data) : m_data(data) {}
         guid Id() { return m_data.id; }
         hstring Name() { return m_data.name; }
+        SemVersion Version() { return { m_data.version[0], m_data.version[1], m_data.version[2] }; }
+        Windows::Data::Json::JsonValue TemplateConfig() { return m_data.template_config; }
     private:
         ::WinMount::ListFServerProviderItemData m_data;
     };
@@ -106,6 +114,8 @@ namespace winrt::WinMount::App::Pages::implementation {
     struct MainViewModel : MainViewModelT<MainViewModel> {
         using IGenericObservableVector = Windows::Foundation::Collections::IObservableVector<
             Windows::Foundation::IInspectable>;
+        using GenericQueryObservableVector = util::winrt::QueryObservableVector<
+            Windows::Foundation::IInspectable>;
 
         MainViewModel(::WinMount::WinMountClient const& client);
 
@@ -113,6 +123,9 @@ namespace winrt::WinMount::App::Pages::implementation {
         IGenericObservableVector FsItems() { return m_fs_items; }
         IGenericObservableVector FsrvpItems() { return m_fsrvp_items; }
         IGenericObservableVector FsrvItems() { return m_fsrv_items; }
+
+        IGenericObservableVector FspItemsNoHidden() { return *m_fsp_items_no_hidden; }
+        IGenericObservableVector FsItemsNoGlobal() { return *m_fs_items_no_global; }
 
         Windows::Foundation::IAsyncAction ReloadFsItemsAsync();
         Windows::Foundation::IAsyncAction ReloadFsrvItemsAsync();
@@ -143,5 +156,8 @@ namespace winrt::WinMount::App::Pages::implementation {
         IGenericObservableVector m_fs_items{ util::winrt::make_stovi() };
         IGenericObservableVector m_fsrvp_items{ util::winrt::make_stovi() };
         IGenericObservableVector m_fsrv_items{ util::winrt::make_stovi() };
+
+        com_ptr<GenericQueryObservableVector> m_fsp_items_no_hidden{ nullptr };
+        com_ptr<GenericQueryObservableVector> m_fs_items_no_global{ nullptr };
     };
 }

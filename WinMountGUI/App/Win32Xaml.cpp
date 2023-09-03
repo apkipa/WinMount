@@ -437,6 +437,7 @@ DECLARE_INTERFACE_IID_(ICoreApplicationViewTitleBarInternal, ::IInspectable, "6E
         STUB_DO_NOT_USE) PURE;
     STDMETHOD(SetInputSinkWindow)(THIS_
         HWND hWnd) PURE;
+    // TODO: SetTitleBarVisual accepts IDCompositionVisualPartner in reality
     STDMETHOD(SetTitleBarVisual)(THIS_
         IN IUnknown *ptr) PURE;
     STDMETHOD(HasTitleBarVisual)(THIS_

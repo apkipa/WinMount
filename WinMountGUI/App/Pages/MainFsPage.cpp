@@ -30,8 +30,8 @@ namespace winrt::WinMount::App::Pages::implementation {
         // Prevent items display duplication bug
         util::winrt::run_when_loaded([this](auto&&) {
             auto vm = m_parent->ViewModel();
-            this->FsListView().ItemsSource(vm.FsItems());
-            this->DetailsAddNew_FsTypeComboBox().ItemsSource(vm.FspItems());
+            this->FsListView().ItemsSource(vm.FsItemsNoGlobal());
+            this->DetailsAddNew_FsTypeComboBox().ItemsSource(vm.FspItemsNoHidden());
         }, this);
 
         util::winrt::fix_scroll_viewer_focus(this->DetailsAddNewRoot().Children().GetAt(0).as<ScrollViewer>());
@@ -166,12 +166,13 @@ namespace winrt::WinMount::App::Pages::implementation {
         co_await m_parent->ViewModel().ReloadFsItemsAsync();
     }
     bool MainFsPage::SelectFsItemById(guid const& id) {
-        auto fs_items = m_parent->ViewModel().FsItems();
+        auto fs_list_view = this->FsListView();
+        auto fs_items = fs_list_view.ItemsSource().as<MainViewModel::IGenericObservableVector>();
         uint32_t size = fs_items.Size();
         for (uint32_t i = 0; i < size; i++) {
             auto fs_item = fs_items.GetAt(i).as<FsItem>();
             if (fs_item->Id() == id) {
-                this->FsListView().SelectedIndex(static_cast<int32_t>(i));
+                fs_list_view.SelectedIndex(static_cast<int32_t>(i));
                 return true;
             }
         }

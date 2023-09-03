@@ -12,10 +12,14 @@ namespace WinMount {
         winrt::hstring name;
         winrt::guid kind_id;
         bool is_running;
+        bool is_global;
     };
     struct ListFileSystemProviderItemData {
         winrt::guid id;
         winrt::hstring name;
+        uint32_t version[3];
+        winrt::Windows::Data::Json::JsonValue template_config{ nullptr };
+        bool is_hidden;
     };
     struct ListFServerItemData {
         winrt::guid id;
@@ -27,11 +31,14 @@ namespace WinMount {
     struct ListFServerProviderItemData {
         winrt::guid id;
         winrt::hstring name;
+        uint32_t version[3];
+        winrt::Windows::Data::Json::JsonValue template_config{ nullptr };
     };
     struct GetFileSystemInfoData {
         winrt::hstring name;
         winrt::guid kind_id;
         bool is_running;
+        bool is_global;
         winrt::Windows::Data::Json::JsonValue config{ nullptr };
     };
     struct GetFServerInfoData {

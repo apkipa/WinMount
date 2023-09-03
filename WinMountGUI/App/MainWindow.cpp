@@ -15,7 +15,7 @@ namespace winrt::WinMount::App::implementation {
         MainWindowT::InitializeComponent();
 
         this->ExtendsContentIntoTitleBar(true);
-        this->SetTitleBar(BackgroundDragArea());
+        this->SetTitleBar(this->BackgroundDragArea());
         {   // Update title bar button colors
             using Windows::UI::Color;
             using Windows::UI::Colors;
@@ -29,6 +29,8 @@ namespace winrt::WinMount::App::implementation {
             tb.ButtonHoverBackgroundColor(bg_hover_clr);
             tb.ButtonPressedBackgroundColor(bg_pressed_clr);
         }
+
+        // TODO: Change title bar visual state when window is deactivated
 
         Pages::DaemonManagePageNavParams params = {
             .ScenarioMode = Pages::DaemonManagePageScenarioMode::FirstLoad

@@ -111,6 +111,18 @@ namespace json {
             value.push_back(std::move(temp));
         }
     }
+    template<typename T, size_t N>
+    void read(JsonObject const& jo, hstring const& key, T(&value)[N]) {
+        auto ja = get<JsonArray>(jo, key);
+        auto size = ja.Size();
+        if (size != N) {
+            throw hresult_error(E_FAIL,
+                std::format(L"JSON array size mismatch (expected {}, found {})", N, size));
+        }
+        for (uint32_t i = 0; i < size; i++) {
+            read(ja.GetAt(i), value[i]);
+        }
+    }
     template<typename T>
     void read(IJsonValue const& jv, std::vector<T>& value) {
         value.clear();
@@ -121,6 +133,18 @@ namespace json {
             T temp;
             read(ja.GetAt(i), temp);
             value.push_back(std::move(temp));
+        }
+    }
+    template<typename T, size_t N>
+    void read(IJsonValue const& jv, T (&value)[N]) {
+        auto ja = get<JsonArray>(jv);
+        auto size = ja.Size();
+        if (size != N) {
+            throw hresult_error(E_FAIL,
+                std::format(L"JSON array size mismatch (expected {}, found {})", N, size));
+        }
+        for (uint32_t i = 0; i < size; i++) {
+            read(ja.GetAt(i), value[i]);
         }
     }
 }
@@ -134,12 +158,16 @@ namespace json {
         read(jo, L"name", value.name);
         read(jo, L"kind_id", value.kind_id);
         read(jo, L"is_running", value.is_running);
+        read(jo, L"is_global", value.is_global);
     }
     template<>
     void read(IJsonValue const& jv, ::WinMount::ListFileSystemProviderItemData& value) {
         auto jo = get<JsonObject>(jv);
         read(jo, L"id", value.id);
         read(jo, L"name", value.name);
+        read(jo, L"version", value.version);
+        read(jo, L"template_config", value.template_config);
+        read(jo, L"is_hidden", value.is_hidden);
     }
     template<>
     void read(IJsonValue const& jv, ::WinMount::ListFServerItemData& value) {
@@ -155,6 +183,8 @@ namespace json {
         auto jo = get<JsonObject>(jv);
         read(jo, L"id", value.id);
         read(jo, L"name", value.name);
+        read(jo, L"version", value.version);
+        read(jo, L"template_config", value.template_config);
     }
     template<>
     void read(IJsonValue const& jv, ::WinMount::GetFileSystemInfoData& value) {
@@ -162,6 +192,7 @@ namespace json {
         read(jo, L"name", value.name);
         read(jo, L"kind_id", value.kind_id);
         read(jo, L"is_running", value.is_running);
+        read(jo, L"is_global", value.is_global);
         read(jo, L"config", value.config);
     }
     template<>
@@ -231,7 +262,7 @@ namespace WinMount {
             json::put(jo, L"name", name);
             json::put(jo, L"kind_id", kind_id);
             if (config) { json::put(jo, L"config", config); }
-            auto resp = co_await ws_read_response(co_await ws_send_request(L"create-fs", jo));
+            auto resp = co_await ws_do_request(L"create-fs", jo);
             ensure_successful_response(resp);
             co_return json::get<guid>(resp.data.GetObject(), L"fs_id");
         }
@@ -241,7 +272,7 @@ namespace WinMount {
 
             auto jo = JsonObject();
             json::put(jo, L"id", id);
-            auto resp = co_await ws_read_response(co_await ws_send_request(L"remove-fs", jo));
+            auto resp = co_await ws_do_request(L"remove-fs", jo);
             ensure_successful_response(resp);
         }
         util::winrt::task<bool> start_fs(guid const& id) {
@@ -250,7 +281,7 @@ namespace WinMount {
 
             auto jo = JsonObject();
             json::put(jo, L"id", id);
-            auto resp = co_await ws_read_response(co_await ws_send_request(L"start-fs", jo));
+            auto resp = co_await ws_do_request(L"start-fs", jo);
             ensure_successful_response(resp);
             co_return json::get<bool>(resp.data.GetObject(), L"new_started");
         }
@@ -260,7 +291,7 @@ namespace WinMount {
 
             auto jo = JsonObject();
             json::put(jo, L"id", id);
-            auto resp = co_await ws_read_response(co_await ws_send_request(L"stop-fs", jo));
+            auto resp = co_await ws_do_request(L"stop-fs", jo);
             ensure_successful_response(resp);
             co_return json::get<bool>(resp.data.GetObject(), L"new_stopped");
         }
@@ -278,7 +309,7 @@ namespace WinMount {
             json::put(jo, L"kind_id", kind_id);
             json::put(jo, L"in_fs_id", in_fs_id);
             if (config) { json::put(jo, L"config", config); }
-            auto resp = co_await ws_read_response(co_await ws_send_request(L"create-fsrv", jo));
+            auto resp = co_await ws_do_request(L"create-fsrv", jo);
             ensure_successful_response(resp);
             co_return json::get<guid>(resp.data.GetObject(), L"fsrv_id");
         }
@@ -288,7 +319,7 @@ namespace WinMount {
 
             auto jo = JsonObject();
             json::put(jo, L"id", id);
-            auto resp = co_await ws_read_response(co_await ws_send_request(L"remove-fsrv", jo));
+            auto resp = co_await ws_do_request(L"remove-fsrv", jo);
             ensure_successful_response(resp);
         }
         util::winrt::task<bool> start_fsrv(guid const& id) {
@@ -297,7 +328,7 @@ namespace WinMount {
 
             auto jo = JsonObject();
             json::put(jo, L"id", id);
-            auto resp = co_await ws_read_response(co_await ws_send_request(L"start-fsrv", jo));
+            auto resp = co_await ws_do_request(L"start-fsrv", jo);
             ensure_successful_response(resp);
             co_return json::get<bool>(resp.data.GetObject(), L"new_started");
         }
@@ -307,7 +338,7 @@ namespace WinMount {
 
             auto jo = JsonObject();
             json::put(jo, L"id", id);
-            auto resp = co_await ws_read_response(co_await ws_send_request(L"stop-fsrv", jo));
+            auto resp = co_await ws_do_request(L"stop-fsrv", jo);
             ensure_successful_response(resp);
             co_return json::get<bool>(resp.data.GetObject(), L"new_stopped");
         }
@@ -315,7 +346,7 @@ namespace WinMount {
             auto cancellation_token = co_await get_cancellation_token();
             cancellation_token.enable_propagation();
 
-            auto resp = co_await ws_read_response(co_await ws_send_request(L"list-fs", nullptr));
+            auto resp = co_await ws_do_request(L"list-fs", nullptr);
             ensure_successful_response(resp);
             std::vector<ListFileSystemItemData> result;
             json::read(resp.data.GetObject(), L"fs_list", result);
@@ -325,7 +356,7 @@ namespace WinMount {
             auto cancellation_token = co_await get_cancellation_token();
             cancellation_token.enable_propagation();
 
-            auto resp = co_await ws_read_response(co_await ws_send_request(L"list-fsp", nullptr));
+            auto resp = co_await ws_do_request(L"list-fsp", nullptr);
             ensure_successful_response(resp);
             std::vector<ListFileSystemProviderItemData> result;
             json::read(resp.data.GetObject(), L"fsp_list", result);
@@ -335,7 +366,7 @@ namespace WinMount {
             auto cancellation_token = co_await get_cancellation_token();
             cancellation_token.enable_propagation();
 
-            auto resp = co_await ws_read_response(co_await ws_send_request(L"list-fsrv", nullptr));
+            auto resp = co_await ws_do_request(L"list-fsrv", nullptr);
             ensure_successful_response(resp);
             std::vector<ListFServerItemData> result;
             json::read(resp.data.GetObject(), L"fsrv_list", result);
@@ -345,7 +376,7 @@ namespace WinMount {
             auto cancellation_token = co_await get_cancellation_token();
             cancellation_token.enable_propagation();
 
-            auto resp = co_await ws_read_response(co_await ws_send_request(L"list-fsrvp", nullptr));
+            auto resp = co_await ws_do_request(L"list-fsrvp", nullptr);
             ensure_successful_response(resp);
             std::vector<ListFServerProviderItemData> result;
             json::read(resp.data.GetObject(), L"fsrvp_list", result);
@@ -357,7 +388,7 @@ namespace WinMount {
 
             auto jo = JsonObject();
             json::put(jo, L"id", id);
-            auto resp = co_await ws_read_response(co_await ws_send_request(L"get-fs-info", jo));
+            auto resp = co_await ws_do_request(L"get-fs-info", jo);
             ensure_successful_response(resp);
             GetFileSystemInfoData result;
             json::read(resp.data, result);
@@ -369,7 +400,7 @@ namespace WinMount {
 
             auto jo = JsonObject();
             json::put(jo, L"id", id);
-            auto resp = co_await ws_read_response(co_await ws_send_request(L"get-fsrv-info", jo));
+            auto resp = co_await ws_do_request(L"get-fsrv-info", jo);
             ensure_successful_response(resp);
             GetFServerInfoData result;
             json::read(resp.data, result);
@@ -383,7 +414,7 @@ namespace WinMount {
             json::put(jo, L"id", id);
             if (!name.empty()) { json::put(jo, L"name", name); }
             if (config) { json::put(jo, L"config", config); }
-            auto resp = co_await ws_read_response(co_await ws_send_request(L"update-fs-info", jo));
+            auto resp = co_await ws_do_request(L"update-fs-info", jo);
             ensure_successful_response(resp);
         }
         util::winrt::task<> update_fsrv_info(guid const& id, hstring const& name, IJsonValue const& config) {
@@ -394,7 +425,7 @@ namespace WinMount {
             json::put(jo, L"id", id);
             if (!name.empty()) { json::put(jo, L"name", name); }
             if (config) { json::put(jo, L"config", config); }
-            auto resp = co_await ws_read_response(co_await ws_send_request(L"update-fsrv-info", jo));
+            auto resp = co_await ws_do_request(L"update-fsrv-info", jo);
             ensure_successful_response(resp);
         }
 
@@ -405,7 +436,7 @@ namespace WinMount {
                 auto read_str_from_reader_fn = [](DataReader const& reader) {
                     reader.UnicodeEncoding(UnicodeEncoding::Utf8);
                     return reader.ReadString(reader.UnconsumedBufferLength());
-                };
+                    };
 
                 auto resp = read_str_from_reader_fn(e.GetDataReader());
                 if (!m_handshake_completed.load(std::memory_order_relaxed)) {
@@ -507,20 +538,21 @@ namespace WinMount {
                     promise->set_canceller([](void* p) {
                         auto that = static_cast<awaitable*>(p);
                         // SAFETY: Cancellation never runs on the same thread as resume at this time
-                        std::unique_lock guard{ *that->m_guard.mutex() };
+                        std::unique_lock guard{ that->m_that->m_mutex_resp };
                         auto it = std::ranges::find_if(that->m_that->m_resp_resumes,
                             [&](std::coroutine_handle<> const& v) { return that->m_self.address() == v.address(); }
                         );
                         if (it != that->m_that->m_resp_resumes.end()) {
                             // Not resumed, cancel then resume immediately
                             that->m_guard = std::move(guard);
+                            that->m_that->m_resp_resumes.erase(it);
                             // TODO: We can also clear stale responses?
                             ::winrt::impl::resume_background(that->m_self);
                         }
                         else {
                             // Already resumed or pending resume, do nothing
                         }
-                    }, this);
+                        }, this);
                 }
 
             private:
@@ -534,7 +566,7 @@ namespace WinMount {
                 // First check for existing responses
                 auto it = std::ranges::find_if(m_resp_queue, [&](MessageResponse const& v) {
                     return v.syn == syn;
-                });
+                    });
                 if (it != m_resp_queue.end()) {
                     auto result = std::move(*it);
                     m_resp_queue.erase(it);
@@ -545,6 +577,12 @@ namespace WinMount {
             }
             // Force throw exception
             ensure_not_closed();
+        }
+        util::winrt::task<MessageResponse> ws_do_request(hstring const& method, IJsonValue const& params) {
+            auto cancellation_token = co_await get_cancellation_token();
+            cancellation_token.enable_propagation();
+
+            co_return co_await ws_read_response(co_await ws_send_request(method, params));
         }
 
         MessageWebSocket m_ws{ nullptr };
