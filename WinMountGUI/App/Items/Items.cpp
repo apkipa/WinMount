@@ -1,20 +1,20 @@
 #include "pch.h"
 
-#include "Pages\Items.h"
-#include "Pages\FsItem.g.cpp"
-#include "Pages\FspItem.g.cpp"
-#include "Pages\MainViewModel.g.cpp"
+#include "Items\Items.h"
+#include "Items\FsItem.g.cpp"
+#include "Items\FspItem.g.cpp"
+#include "Items\MainViewModel.g.cpp"
 
 using namespace winrt;
 using namespace winrt::Windows::Foundation;
 
-namespace winrt::WinMount::App::Pages::implementation {
+namespace winrt::WinMount::App::Items::implementation {
     MainViewModel::MainViewModel(::WinMount::WinMountClient const& client) : m_client(client) {
         m_fsp_items_no_hidden = make_self<GenericQueryObservableVector>(m_fsp_items, nullptr,
-            [](IInspectable const& v) { return !v.as<WinMount::App::Pages::FspItem>().IsHidden(); }
+            [](IInspectable const& v) { return !v.as<WinMount::App::Items::FspItem>().IsHidden(); }
         );
         m_fs_items_no_global = make_self<GenericQueryObservableVector>(m_fs_items, nullptr,
-            [](IInspectable const& v) { return !v.as<WinMount::App::Pages::FsItem>().IsGlobal(); }
+            [](IInspectable const& v) { return !v.as<WinMount::App::Items::FsItem>().IsGlobal(); }
         );
     }
     hstring MainViewModel::GetFspNameFromId(guid const& id) {

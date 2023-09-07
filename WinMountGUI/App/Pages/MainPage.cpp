@@ -17,7 +17,7 @@ namespace winrt::WinMount::App::Pages::implementation {
     MainPage::MainPage() {}
     void MainPage::OnNavigatedTo(NavigationEventArgs const& e) {
         m_client = util::winrt::unbox_any<::WinMount::WinMountClient>(e.Parameter());
-        m_vm = make_self<MainViewModel>(m_client);
+        m_vm = make_self<Items::implementation::MainViewModel>(m_client);
 
         // Remove focus visual on startup
         util::winrt::run_when_loaded([this](auto&&) {

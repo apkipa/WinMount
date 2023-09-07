@@ -1,17 +1,22 @@
 #pragma once
 
-#include "Pages\FsItem.g.h"
-#include "Pages\FspItem.g.h"
-#include "Pages\FsrvItem.g.h"
-#include "Pages\FsrvpItem.g.h"
-#include "Pages\MainViewModel.g.h"
+#include "Items\FsItem.g.h"
+#include "Items\FspItem.g.h"
+#include "Items\FsrvItem.g.h"
+#include "Items\FsrvpItem.g.h"
+#include "Items\MainViewModel.g.h"
 
 #include "WinMountClient.hpp"
 #include "util.hpp"
 
+static constexpr winrt::guid MEMFS_ID{ "A93FB2C4-1A4A-4510-9826-7B72A5AFDE45" };
+static constexpr winrt::guid LOCALFS_ID{ "1734A44B-605D-43F6-8BBE-E92BD3336D69" };
+
+static constexpr winrt::guid DOKAN_FSERVER_ID{ "40612005-FA2F-49B8-820B-B0E7521602D7" };
+
 static constexpr winrt::guid GLOBAL_FS_LOCALFS_ID{ "96DD6C88-CDB5-4446-8269-104F2DD82ACD" };
 
-namespace winrt::WinMount::App::Pages::implementation {
+namespace winrt::WinMount::App::Items::implementation {
     struct FspItem : FspItemT<FspItem> {
         FspItem(::WinMount::ListFileSystemProviderItemData const& data) : m_data(data) {}
         guid Id() { return m_data.id; }
@@ -110,7 +115,7 @@ namespace winrt::WinMount::App::Pages::implementation {
     };
 }
 
-namespace winrt::WinMount::App::Pages::implementation {
+namespace winrt::WinMount::App::Items::implementation {
     struct MainViewModel : MainViewModelT<MainViewModel> {
         using IGenericObservableVector = Windows::Foundation::Collections::IObservableVector<
             Windows::Foundation::IInspectable>;
@@ -136,11 +141,6 @@ namespace winrt::WinMount::App::Pages::implementation {
         auto const& GetClient() { return m_client; }
 
     private:
-        friend MainFsPage;
-        friend MainFsrvPage;
-        friend MainSettingsPage;
-        friend MainAboutPage;
-
         util::winrt::task<> ReloadFsItemsAsyncInner();
         util::winrt::task<> ReloadFsrvItemsAsyncInner();
 

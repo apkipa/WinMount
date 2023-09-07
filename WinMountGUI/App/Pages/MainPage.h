@@ -2,7 +2,7 @@
 
 #include "Pages\MainPage.g.h"
 #include "WinMountClient.hpp"
-#include "Items.h"
+#include "Items\Items.h"
 
 #include "util.hpp"
 
@@ -21,7 +21,7 @@ namespace winrt::WinMount::App::Pages::implementation {
             Microsoft::UI::Xaml::Controls::NavigationViewItemInvokedEventArgs const& e
         );
 
-        WinMount::App::Pages::MainViewModel ViewModel() { return *m_vm.get(); }
+        WinMount::App::Items::MainViewModel ViewModel() { return *m_vm.get(); }
 
     private:
         friend MainFsPage;
@@ -33,7 +33,7 @@ namespace winrt::WinMount::App::Pages::implementation {
 
         ::WinMount::WinMountClient m_client{ nullptr };
 
-        com_ptr<MainViewModel> m_vm{ nullptr };
+        com_ptr<Items::implementation::MainViewModel> m_vm{ nullptr };
     };
 }
 

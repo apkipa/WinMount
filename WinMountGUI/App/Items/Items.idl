@@ -1,5 +1,4 @@
-// For consumption over WinMount.App.Pages
-namespace WinMount.App.Pages {
+namespace WinMount.App.Items {
     struct SemVersion {
         UInt32 Major, Minor, Patch;
     };

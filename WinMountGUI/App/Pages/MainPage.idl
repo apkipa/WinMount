@@ -1,10 +1,10 @@
-import "Pages\Items.idl";
+import "Items\Items.idl";
 
 namespace WinMount.App.Pages {
     [default_interface]
     runtimeclass MainPage : Windows.UI.Xaml.Controls.Page {
         MainPage();
 
-        MainViewModel ViewModel{ get; };
+        WinMount.App.Items.MainViewModel ViewModel{ get; };
     };
 }

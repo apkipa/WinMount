@@ -6,7 +6,8 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:muxc="using:Microsoft.UI.Xaml.Controls"
-    xmlns:pages="using:WinMount.App.Pages"
+    xmlns:items="using:WinMount.App.Items"
+    xmlns:ctrls="using:WinMount.App.Controls"
     mc:Ignorable="d">
 
     <Page.Resources>
@@ -73,7 +74,7 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Text="Filesystems List" Margin="8,0" VerticalAlignment="Center" TextLineBounds="Tight"/>
+                <TextBlock Text="Filesystems list" Margin="8,0" VerticalAlignment="Center" TextLineBounds="Tight"/>
                 <AppBarButton x:Name="AddNewFsButton" Icon="Add" Grid.Column="1" Width="40"
                               Click="AddNewFsButton_Click"/>
                 <AppBarButton x:Name="ReloadFsListButton" Icon="Refresh" Grid.Column="2" Width="40"
@@ -82,7 +83,7 @@
             <ListView x:Name="FsListView" Grid.Row="1" BorderThickness="0,1,0,0" BorderBrush="#e6e6e6"
                       SelectionChanged="FsListView_SelectionChanged">
                 <ListView.ItemTemplate>
-                    <DataTemplate x:DataType="pages:FsItem">
+                    <DataTemplate x:DataType="items:FsItem">
                         <Grid Height="48">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="*"/>
@@ -138,16 +139,16 @@
                         <TextBlock Text="Add New Filesystem" FontWeight="SemiBold" FontSize="28"/>
                         <TextBlock Text="Name"/>
                         <TextBox x:Name="DetailsAddNew_FsNameTextBox"/>
-                        <ComboBox x:Name="DetailsAddNew_FsTypeComboBox" Header="Filesystem Type">
+                        <ComboBox x:Name="DetailsAddNew_FsTypeComboBox" Header="Filesystem type"
+                                  SelectionChanged="DetailsAddNew_FsTypeComboBox_SelectionChanged">
                             <ComboBox.ItemTemplate>
-                                <DataTemplate x:DataType="pages:FspItem">
+                                <DataTemplate x:DataType="items:FspItem">
                                     <TextBlock Text="{x:Bind Name}"/>
                                 </DataTemplate>
                             </ComboBox.ItemTemplate>
                         </ComboBox>
                         <TextBlock Text="Configuration"/>
-                        <TextBox x:Name="DetailsAddNew_FsConfigTextBox" AcceptsReturn="True"
-                                 HorizontalAlignment="Stretch" FontFamily="Consolas" IsSpellCheckEnabled="False"/>
+                        <ctrls:ItemConfigEditControl x:Name="DetailsAddNew_FsConfigEditCtrl"/>
                     </StackPanel>
                 </ScrollViewer>
                 <Grid BorderBrush="#e6e6e6" BorderThickness="0,1,0,0" Padding="12,8" Grid.Row="1">
@@ -181,11 +182,10 @@
                         </Grid>
                         <TextBlock Text="Name"/>
                         <TextBox x:Name="DetailsEditCurrent_FsNameTextBox"/>
-                        <ComboBox x:Name="DetailsEditCurrent_FsTypeComboBox" Header="Filesystem Type"
+                        <ComboBox x:Name="DetailsEditCurrent_FsTypeComboBox" Header="Filesystem type"
                                   IsEnabled="False"/>
                         <TextBlock Text="Configuration"/>
-                        <TextBox x:Name="DetailsEditCurrent_FsConfigTextBox" AcceptsReturn="True"
-                                 HorizontalAlignment="Stretch" FontFamily="Consolas" IsSpellCheckEnabled="False"/>
+                        <ctrls:ItemConfigEditControl x:Name="DetailsEditCurrent_FsConfigEditCtrl"/>
                     </StackPanel>
                 </ScrollViewer>
                 <Grid BorderBrush="#e6e6e6" BorderThickness="0,1,0,0" Padding="12,8" Grid.Row="1">
@@ -193,7 +193,7 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <Button Content="Apply Changes" Grid.Column="1" Style="{ThemeResource AccentButtonStyle}"
+                    <Button Content="Apply changes" Grid.Column="1" Style="{ThemeResource AccentButtonStyle}"
                             Click="DetailsEditCurrent_CommitButton_Click"/>
                 </Grid>
             </Grid>

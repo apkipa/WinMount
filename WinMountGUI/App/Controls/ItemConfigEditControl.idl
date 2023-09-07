@@ -1,0 +1,34 @@
+namespace WinMount.App.Controls {
+    // NOTE: ConfigVM should try to preserve unknown fields from input
+    //       as much as possible
+    interface ItemConfigEditControl_IConfigVM {
+        // NOTE: Should never fail
+        Windows.Data.Json.IJsonValue GetConfigData();
+        // NOTE: May throw
+        void SetConfigData(Windows.Data.Json.IJsonValue value);
+    };
+
+    runtimeclass ItemConfigEditControl_RawConfigVM : ItemConfigEditControl_IConfigVM, Windows.UI.Xaml.Data.INotifyPropertyChanged {
+        String RawString;
+    };
+    runtimeclass ItemConfigEditControl_DokanFsrvConfigVM : ItemConfigEditControl_IConfigVM, Windows.UI.Xaml.Data.INotifyPropertyChanged {
+        IObservableVector<Object> MountPointComboBox_Items{ get; };
+        Object MountPointComboBox_SelectedItem;
+        String MountPoint;
+        Boolean EnableSysDirs;
+        Boolean ReadonlyDrive;
+    };
+
+    [default_interface]
+    runtimeclass ItemConfigEditControl : Windows.UI.Xaml.Controls.UserControl {
+        ItemConfigEditControl();
+
+        // NOTE: Set ConfigTypeId first before setting config data
+        Guid ConfigTypeId;
+
+        Windows.Data.Json.IJsonValue GetConfigData();
+        void SetConfigData(Windows.Data.Json.IJsonValue value);
+
+        ItemConfigEditControl_IConfigVM ConfigVM{ get; };
+    };
+}

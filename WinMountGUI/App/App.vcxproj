@@ -175,6 +175,10 @@
   <ItemGroup>
     <ClInclude Include="Code\util.hpp" />
     <ClInclude Include="Code\WinMountClient.hpp" />
+    <ClInclude Include="Controls\ItemConfigEditControl.h">
+      <DependentUpon>Controls\ItemConfigEditControl.xaml</DependentUpon>
+      <SubType>Code</SubType>
+    </ClInclude>
     <ClInclude Include="MainWindow.h">
       <DependentUpon>MainWindow.xaml</DependentUpon>
       <SubType>Code</SubType>
@@ -183,7 +187,7 @@
       <DependentUpon>Pages\DaemonManagePage.xaml</DependentUpon>
       <SubType>Code</SubType>
     </ClInclude>
-    <ClInclude Include="Pages\Items.h" />
+    <ClInclude Include="Items\Items.h" />
     <ClInclude Include="Pages\MainAboutPage.h">
       <DependentUpon>Pages\MainAboutPage.xaml</DependentUpon>
       <SubType>Code</SubType>
@@ -213,6 +217,9 @@
     <ApplicationDefinition Include="App.xaml">
       <SubType>Designer</SubType>
     </ApplicationDefinition>
+    <Page Include="Controls\ItemConfigEditControl.xaml">
+      <SubType>Designer</SubType>
+    </Page>
     <Page Include="Pages\DaemonManagePage.xaml">
       <SubType>Designer</SubType>
     </Page>
@@ -238,6 +245,10 @@
   <ItemGroup>
     <ClCompile Include="Code\util.cpp" />
     <ClCompile Include="Code\WinMountClient.cpp" />
+    <ClCompile Include="Controls\ItemConfigEditControl.cpp">
+      <DependentUpon>Controls\ItemConfigEditControl.xaml</DependentUpon>
+      <SubType>Code</SubType>
+    </ClCompile>
     <ClCompile Include="main.cpp" />
     <ClCompile Include="MainWindow.cpp">
       <DependentUpon>MainWindow.xaml</DependentUpon>
@@ -247,7 +258,7 @@
       <DependentUpon>Pages\DaemonManagePage.xaml</DependentUpon>
       <SubType>Code</SubType>
     </ClCompile>
-    <ClCompile Include="Pages\Items.cpp" />
+    <ClCompile Include="Items\Items.cpp" />
     <ClCompile Include="Pages\MainAboutPage.cpp">
       <DependentUpon>Pages\MainAboutPage.xaml</DependentUpon>
       <SubType>Code</SubType>
@@ -280,11 +291,15 @@
     <Midl Include="App.idl">
       <DependentUpon>App.xaml</DependentUpon>
     </Midl>
+    <Midl Include="Controls\ItemConfigEditControl.idl">
+      <DependentUpon>Controls\ItemConfigEditControl.xaml</DependentUpon>
+      <SubType>Code</SubType>
+    </Midl>
     <Midl Include="Pages\DaemonManagePage.idl">
       <DependentUpon>Pages\DaemonManagePage.xaml</DependentUpon>
       <SubType>Code</SubType>
     </Midl>
-    <Midl Include="Pages\Items.idl" />
+    <Midl Include="Items\Items.idl" />
     <Midl Include="Pages\MainAboutPage.idl">
       <DependentUpon>Pages\MainAboutPage.xaml</DependentUpon>
       <SubType>Code</SubType>

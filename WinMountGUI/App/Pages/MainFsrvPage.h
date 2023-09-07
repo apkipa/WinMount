@@ -1,8 +1,10 @@
 ﻿#pragma once
 
+#include "Controls\ItemConfigEditControl.h"
+
 #include "Pages\MainFsrvPage.g.h"
 
-#include "Pages\Items.h"
+#include "Items\Items.h"
 
 #include "util.hpp"
 
@@ -30,6 +32,10 @@ namespace winrt::WinMount::App::Pages::implementation {
             Windows::Foundation::IInspectable const&,
             Windows::UI::Xaml::Controls::SelectionChangedEventArgs const& e
         );
+        void DetailsAddNew_FsrvTypeComboBox_SelectionChanged(
+            Windows::Foundation::IInspectable const&,
+            Windows::UI::Xaml::Controls::SelectionChangedEventArgs const& e
+        );
         void DetailsAddNew_CreateButton_Click(
             Windows::Foundation::IInspectable const&,
             Windows::UI::Xaml::RoutedEventArgs const&
@@ -49,7 +55,7 @@ namespace winrt::WinMount::App::Pages::implementation {
         Windows::Foundation::IAsyncOperation<bool> StartFsrvAsync(guid id);
         Windows::Foundation::IAsyncOperation<bool> StopFsrvAsync(guid id);
 
-        com_ptr<MainViewModel> m_main_vm{ nullptr };
+        com_ptr<Items::implementation::MainViewModel> m_main_vm{ nullptr };
 
         util::winrt::async_storage m_async;
     };

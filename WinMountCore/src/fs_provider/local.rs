@@ -25,8 +25,8 @@ use windows::{
             CloseHandle, BOOLEAN, GENERIC_ALL, GENERIC_EXECUTE, GENERIC_READ, GENERIC_WRITE,
             HANDLE, NTSTATUS, STATUS_ACCESS_DENIED, STATUS_END_OF_FILE, STATUS_FILE_IS_A_DIRECTORY,
             STATUS_NOT_A_DIRECTORY, STATUS_NO_MORE_FILES, STATUS_OBJECT_NAME_COLLISION,
-            STATUS_OBJECT_NAME_NOT_FOUND, STATUS_OBJECT_PATH_NOT_FOUND, UNICODE_STRING,
-            WAIT_OBJECT_0,
+            STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_NAME_NOT_FOUND, STATUS_OBJECT_PATH_NOT_FOUND,
+            UNICODE_STRING, WAIT_OBJECT_0,
         },
         Storage::FileSystem::{
             DELETE, FILE_ACCESS_RIGHTS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN,
@@ -86,11 +86,10 @@ impl super::FileSystemHandler for LocalFsHandler {
         create_options: FileCreateOptions,
     ) -> super::FileSystemResult<super::CreateFileInfo<'_>> {
         use FileCreateDisposition::*;
-        // TODO: Fix TOCTTOU bug, or use NtCreateFile instead of CreateFileW
 
         // TODO: Maybe we should sanitize input path to prevent access to
         //       unwanted objects?
-        // TODO: Handle root directory?
+        // TODO: Handle root directory (with GetLogicalDrives)?
 
         // log::debug!("Opening `{}`...", filename.get_path());
 
@@ -196,17 +195,6 @@ impl super::FileSystemHandler for LocalFsHandler {
             }
             nt_create_options
         };
-        // let h = unsafe {
-        //     CreateFileW(
-        //         filename,
-        //         desired_access,
-        //         share_mode,
-        //         std::ptr::null_mut(),
-        //         creation_disposition,
-        //         dwFlagsAndAttributes,
-        //         std::ptr::null_mut(),
-        //     )
-        // };
         let mut io_status_block = MaybeUninit::<IO_STATUS_BLOCK>::uninit();
         let mut h = Default::default();
         let status = unsafe {
@@ -229,6 +217,7 @@ impl super::FileSystemHandler for LocalFsHandler {
             return Err(match NTSTATUS(e.code().0 & !0x1000_0000) {
                 STATUS_OBJECT_NAME_NOT_FOUND => FileSystemError::ObjectNameNotFound,
                 STATUS_OBJECT_NAME_COLLISION => FileSystemError::ObjectNameCollision,
+                STATUS_OBJECT_NAME_INVALID => FileSystemError::ObjectNameInvalid,
                 STATUS_OBJECT_PATH_NOT_FOUND => FileSystemError::ObjectPathNotFound,
                 STATUS_FILE_IS_A_DIRECTORY => FileSystemError::FileIsADirectory,
                 STATUS_NOT_A_DIRECTORY => FileSystemError::NotADirectory,

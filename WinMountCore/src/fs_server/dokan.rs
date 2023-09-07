@@ -91,17 +91,24 @@ struct DokanFServer {
     fs: Arc<dyn FileSystemHandler>,
     dokan_options: MaybeUninit<DOKAN_OPTIONS>,
     open_objs: scc::HashSet<u64>,
+    block_sys_dirs: bool,
     pin: PhantomPinned,
 }
 
 impl DokanFServer {
-    fn new(mount_point: &U16CStr, fs: Arc<dyn FileSystemHandler>) -> Result<Arc<Self>, DokanError> {
+    fn new(
+        fs: Arc<dyn FileSystemHandler>,
+        config: DokanFServerConfig,
+    ) -> Result<Arc<Self>, DokanError> {
+        let mount_point = widestring::U16CString::from_str_truncate(config.mount_point);
+
         let mut server = Arc::new(DokanFServer {
             handle: std::ptr::null_mut(),
             shutdown_flag: AtomicU32::new(0),
             fs,
             dokan_options: MaybeUninit::uninit(),
             open_objs: scc::HashSet::new(),
+            block_sys_dirs: !config.enable_sys_dirs,
             pin: PhantomPinned,
         });
         let mut handle: DOKAN_HANDLE = std::ptr::null_mut();
@@ -112,7 +119,13 @@ impl DokanFServer {
             .write(DOKAN_OPTIONS {
                 Version: DOKAN_VERSION as _,
                 SingleThread: false.into(),
-                Options: DOKAN_OPTION_MOUNT_MANAGER,
+                Options: {
+                    let mut options = DOKAN_OPTION_MOUNT_MANAGER;
+                    if config.readonly_drive {
+                        options |= DOKAN_OPTION_WRITE_PROTECT;
+                    }
+                    options
+                },
                 GlobalContext: global_context,
                 MountPoint: mount_point.as_ptr(),
                 UNCName: std::ptr::null(),
@@ -185,7 +198,13 @@ impl Drop for DokanFServer {
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct DokanFServerConfig {
+    /// Where to mount the filesystem at (such as C:\\, etc.).
     mount_point: String,
+    /// Whether to allow system directories to be created and accessed. It's strongly
+    /// discouraged to enable this, as it can possibly mess up the filesystem.
+    enable_sys_dirs: bool,
+    // Mount filesystem as read-only.
+    readonly_drive: bool,
 }
 
 pub struct DokanFServerProvider {}
@@ -205,7 +224,9 @@ impl super::FsServerProvider for DokanFServerProvider {
         config: serde_json::Value,
     ) -> anyhow::Result<Arc<dyn FileSystemServer>> {
         // TODO: Reject when requested mount point has been taken
-        let result = DokanFServer::new(widestring::u16cstr!("M:\\"), fs)?;
+        let config: DokanFServerConfig = serde_json::from_value(config)?;
+        // TODO: enable_sys_dirs
+        let result = DokanFServer::new(fs, config)?;
         Ok(result)
     }
     fn get_template_config(&self) -> serde_json::Value {
@@ -213,6 +234,8 @@ impl super::FsServerProvider for DokanFServerProvider {
         //       the specified one has been taken
         serde_json::to_value(DokanFServerConfig {
             mount_point: "M:\\".to_owned(),
+            enable_sys_dirs: false,
+            readonly_drive: false,
         })
         .unwrap()
     }

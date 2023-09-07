@@ -23,12 +23,15 @@
     <Page Include="Pages\MainAboutPage.xaml">
       <Filter>Pages</Filter>
     </Page>
+    <Page Include="Controls\ItemConfigEditControl.xaml">
+      <Filter>Controls</Filter>
+    </Page>
   </ItemGroup>
   <ItemGroup>
     <Midl Include="App.idl" />
     <Midl Include="Win32Xaml.idl" />
-    <Midl Include="Pages\Items.idl">
-      <Filter>Pages\Items</Filter>
+    <Midl Include="Items\Items.idl">
+      <Filter>Items</Filter>
     </Midl>
   </ItemGroup>
   <ItemGroup>
@@ -43,8 +46,8 @@
     <ClCompile Include="Code\util.cpp">
       <Filter>Code</Filter>
     </ClCompile>
-    <ClCompile Include="Pages\Items.cpp">
-      <Filter>Pages\Items</Filter>
+    <ClCompile Include="Items\Items.cpp">
+      <Filter>Items</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -56,8 +59,8 @@
     <ClInclude Include="Code\util.hpp">
       <Filter>Code</Filter>
     </ClInclude>
-    <ClInclude Include="Pages\Items.h">
-      <Filter>Pages\Items</Filter>
+    <ClInclude Include="Items\Items.h">
+      <Filter>Items</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -73,7 +76,10 @@
     <Filter Include="Strings">
       <UniqueIdentifier>{bd24814c-e606-4829-ab34-f31d004e190d}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Pages\Items">
+    <Filter Include="Controls">
+      <UniqueIdentifier>{0b255e82-d64a-4a87-90e6-8874098c0fa6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Items">
       <UniqueIdentifier>{5125902c-8d60-4074-9a9b-d11ad020973e}</UniqueIdentifier>
     </Filter>
   </ItemGroup>

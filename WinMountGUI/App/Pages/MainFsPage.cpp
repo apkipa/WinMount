@@ -6,7 +6,7 @@
 
 #include "WinMountClient.hpp"
 
-#include "Pages\Items.h"
+#include "Items\Items.h"
 
 using namespace winrt;
 using namespace Windows::Foundation;
@@ -41,16 +41,18 @@ namespace winrt::WinMount::App::Pages::implementation {
         this->FsListView().SelectedItem(nullptr);
         this->DetailsAddNew_FsNameTextBox().Text({});
         this->DetailsAddNew_FsTypeComboBox().SelectedIndex(-1);
-        this->DetailsAddNew_FsConfigTextBox().Text({});
+        auto cfg_ctrl = this->DetailsAddNew_FsConfigEditCtrl();
+        cfg_ctrl.ConfigTypeId({});
+        cfg_ctrl.SetConfigData(nullptr);
         VisualStateManager::GoToState(*this, L"AddNewFsItem", true);
     }
     void MainFsPage::ReloadFsListButton_Click(IInspectable const&, RoutedEventArgs const&) {
         m_async.cancel_and_run(&MainFsPage::ReloadFsListAsync, this);
     }
     void MainFsPage::FsItem_StartStopButton_Click(IInspectable const& sender, RoutedEventArgs const&) {
-        auto fs_item = sender.as<FrameworkElement>().DataContext().as<FsItem>();
+        auto fs_item = sender.as<FrameworkElement>().DataContext().as<Items::implementation::FsItem>();
         if (fs_item->IsRunning()) {
-            m_async.cancel_and_run([](MainFsPage* that, com_ptr<FsItem> fs_item) -> IAsyncAction {
+            m_async.cancel_and_run([](MainFsPage* that, com_ptr<Items::implementation::FsItem> fs_item) -> IAsyncAction {
                 auto cancellation_token = co_await get_cancellation_token();
                 cancellation_token.enable_propagation();
 
@@ -59,7 +61,7 @@ namespace winrt::WinMount::App::Pages::implementation {
             }, this, std::move(fs_item));
         }
         else {
-            m_async.cancel_and_run([](MainFsPage* that, com_ptr<FsItem> fs_item) -> IAsyncAction {
+            m_async.cancel_and_run([](MainFsPage* that, com_ptr<Items::implementation::FsItem> fs_item) -> IAsyncAction {
                 auto cancellation_token = co_await get_cancellation_token();
                 cancellation_token.enable_propagation();
 
@@ -74,7 +76,7 @@ namespace winrt::WinMount::App::Pages::implementation {
             VisualStateManager::GoToState(*this, L"Empty", true);
         }
         else {
-            auto fs_item = e.AddedItems().GetAt(0).as<FsItem>();
+            auto fs_item = e.AddedItems().GetAt(0).as<Items::implementation::FsItem>();
             m_async.cancel_and_run([](MainFsPage* that, guid const& id) -> IAsyncAction {
                 auto cancellation_token = co_await get_cancellation_token();
                 cancellation_token.enable_propagation();
@@ -84,13 +86,27 @@ namespace winrt::WinMount::App::Pages::implementation {
 
                 auto fs_info = co_await client.get_fs_info(id);
                 that->DetailsEditCurrent_FsNameTextBox().Text(fs_info.name);
-                auto fs_type_cb = that->DetailsEditCurrent_FsTypeComboBox();
-                fs_type_cb.Items().ReplaceAll({ box_value(vm.GetFspNameFromId(fs_info.kind_id)) });
-                fs_type_cb.SelectedIndex(0);
-                that->DetailsEditCurrent_FsConfigTextBox().Text(fs_info.config.ToString());
+                {
+                    auto fs_type_cb = that->DetailsEditCurrent_FsTypeComboBox();
+                    fs_type_cb.Items().ReplaceAll({ box_value(vm.GetFspNameFromId(fs_info.kind_id)) });
+                    fs_type_cb.SelectedIndex(0);
+                }
+                auto cfg_ctrl = that->DetailsEditCurrent_FsConfigEditCtrl();
+                cfg_ctrl.ConfigTypeId(fs_info.kind_id);
+                cfg_ctrl.SetConfigData(fs_info.config);
                 VisualStateManager::GoToState(*that, L"EditFsItem", true);
             }, this, fs_item->Id());
         }
+    }
+    void MainFsPage::DetailsAddNew_FsTypeComboBox_SelectionChanged(
+        IInspectable const&, SelectionChangedEventArgs const& e
+    ) {
+        auto added_items = e.AddedItems();
+        if (added_items.Size() == 0) { return; }
+        auto item = added_items.GetAt(0).as<Items::implementation::FspItem>();
+        auto cfg_ctrl = DetailsAddNew_FsConfigEditCtrl();
+        cfg_ctrl.ConfigTypeId(item->Id());
+        cfg_ctrl.SetConfigData(item->TemplateConfig());
     }
     void MainFsPage::DetailsAddNew_CreateButton_Click(IInspectable const&, RoutedEventArgs const&) {
         // TODO: Verify input
@@ -101,13 +117,12 @@ namespace winrt::WinMount::App::Pages::implementation {
             auto const& client = that->m_parent->m_client;
 
             auto name = that->DetailsAddNew_FsNameTextBox().Text();
-            auto fsp_item = that->DetailsAddNew_FsTypeComboBox().SelectedItem().try_as<FspItem>();
+            auto fsp_item = that->DetailsAddNew_FsTypeComboBox().SelectedItem().try_as<Items::implementation::FspItem>();
             if (!fsp_item) {
                 throw hresult_error(E_FAIL, L"invalid filesystem provider selection");
             }
             auto kind_id = fsp_item->Id();
-            JsonValue config{ nullptr };
-            JsonValue::TryParse(that->DetailsAddNew_FsConfigTextBox().Text(), config);
+            auto config = that->DetailsAddNew_FsConfigEditCtrl().GetConfigData();
             auto fs_id = co_await client.create_fs(name, kind_id, config);
 
             co_await that->ReloadFsListAsync();
@@ -121,7 +136,7 @@ namespace winrt::WinMount::App::Pages::implementation {
             /*that->IsHitTestVisible(false);
             deferred([&] {that->IsHitTestVisible(true); });*/
             auto const& client = that->m_parent->m_client;
-            auto fs_item = that->FsListView().SelectedItem().as<FsItem>();
+            auto fs_item = that->FsListView().SelectedItem().as<Items::implementation::FsItem>();
             ContentDialog cd;
             cd.XamlRoot(that->XamlRoot());
             cd.Title(box_value(L"Delete This Filesystem?"));
@@ -147,11 +162,10 @@ namespace winrt::WinMount::App::Pages::implementation {
 
             auto const& client = that->m_parent->m_client;
 
-            auto fs_item = that->FsListView().SelectedItem().as<FsItem>();
+            auto fs_item = that->FsListView().SelectedItem().as<Items::implementation::FsItem>();
             auto id = fs_item->Id();
             auto name = that->DetailsEditCurrent_FsNameTextBox().Text();
-            JsonValue config{ nullptr };
-            JsonValue::TryParse(that->DetailsEditCurrent_FsConfigTextBox().Text(), config);
+            auto config = that->DetailsEditCurrent_FsConfigEditCtrl().GetConfigData();
             co_await client.update_fs_info(id, name, config);
 
             co_await that->ReloadFsListAsync();
@@ -167,10 +181,10 @@ namespace winrt::WinMount::App::Pages::implementation {
     }
     bool MainFsPage::SelectFsItemById(guid const& id) {
         auto fs_list_view = this->FsListView();
-        auto fs_items = fs_list_view.ItemsSource().as<MainViewModel::IGenericObservableVector>();
+        auto fs_items = fs_list_view.ItemsSource().as<Items::implementation::MainViewModel::IGenericObservableVector>();
         uint32_t size = fs_items.Size();
         for (uint32_t i = 0; i < size; i++) {
-            auto fs_item = fs_items.GetAt(i).as<FsItem>();
+            auto fs_item = fs_items.GetAt(i).as<Items::implementation::FsItem>();
             if (fs_item->Id() == id) {
                 fs_list_view.SelectedIndex(static_cast<int32_t>(i));
                 return true;

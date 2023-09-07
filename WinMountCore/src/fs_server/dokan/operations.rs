@@ -38,6 +38,7 @@ fn fs_error_to_ntstatus(err: FileSystemError) -> NTSTATUS {
         FileSystemError::NotADirectory => STATUS_NOT_A_DIRECTORY,
         FileSystemError::ObjectNameNotFound => STATUS_OBJECT_NAME_NOT_FOUND,
         FileSystemError::ObjectNameCollision => STATUS_OBJECT_NAME_COLLISION,
+        FileSystemError::ObjectNameInvalid => STATUS_OBJECT_NAME_INVALID,
         FileSystemError::DirectoryNotEmpty => STATUS_DIRECTORY_NOT_EMPTY,
         FileSystemError::AccessDenied => STATUS_ACCESS_DENIED,
         FileSystemError::NoSuchFile => STATUS_NO_SUCH_FILE,
@@ -106,12 +107,16 @@ pub(super) extern "stdcall" fn create_file(
             log::trace!("Opening object `{}`", file_name.to_string_lossy());
         }
 
-        // Block access to system folders
-        if file_name == u16cstr!("\\$RECYCLE.BIN")
-            || file_name == u16cstr!("\\System Volume Information")
-        {
-            return Err(FileSystemError::NoSuchFile);
+        if server.block_sys_dirs {
+            // Block access to system folders
+            if file_name == u16cstr!("\\$RECYCLE.BIN")
+                || file_name == u16cstr!("\\System Volume Information")
+            {
+                // Return an improper NTSTATUS
+                return Err(FileSystemError::NoSuchFile);
+            }
         }
+
         let file_name = U16SegPath::new(file_name, PathDelimiter::BackSlash);
         let raw_create_disposition = create_disposition;
         let create_disposition = match create_disposition {

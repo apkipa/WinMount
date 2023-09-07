@@ -2247,6 +2247,25 @@ namespace util {
 
             //::winrt::event<::winrt::Windows::Foundation::Collections::VectorChangedEventHandler<T>> m_changed;
         };
+
+        // TODO: Optimize performance
+        inline auto clone_json_value(::winrt::Windows::Data::Json::IJsonValue const& value) {
+            using namespace ::winrt::Windows::Data::Json;
+            return JsonValue::Parse(value.Stringify());
+        }
+
+        inline auto to_json_value(double value) {
+            return ::winrt::Windows::Data::Json::JsonValue::CreateNumberValue(value);
+        }
+        inline auto to_json_value(bool value) {
+            return ::winrt::Windows::Data::Json::JsonValue::CreateBooleanValue(value);
+        }
+        inline auto to_json_value(std::nullptr_t) {
+            return ::winrt::Windows::Data::Json::JsonValue::CreateNullValue();
+        }
+        inline auto to_json_value(::winrt::hstring const& value) {
+            return ::winrt::Windows::Data::Json::JsonValue::CreateStringValue(value);
+        }
     }
 
     namespace sync {

@@ -1,0 +1,92 @@
+﻿<UserControl
+    x:Class="WinMount.App.Controls.ItemConfigEditControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:WinMount.App"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:muxc="using:Microsoft.UI.Xaml.Controls"
+    xmlns:ctrls="using:WinMount.App.Controls"
+    mc:Ignorable="d">
+
+    <Grid x:Name="LayoutRoot">
+        <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup x:Name="ConfigTypes">
+                <VisualState x:Name="UnsupportedConfigType"/>
+                <VisualState x:Name="RawConfigType">
+                    <VisualState.Setters>
+                        <Setter Target="ConfigContentContainer.ContentTemplate">
+                            <Setter.Value>
+                                <DataTemplate x:DataType="ctrls:ItemConfigEditControl_RawConfigVM">
+                                    <TextBox x:Name="RawConfigTextBox" AcceptsReturn="True" FontFamily="Consolas"
+                                             HorizontalAlignment="Stretch" IsSpellCheckEnabled="False"
+                                             Margin="0,4,0,0"
+                                             Text="{x:Bind RawString,Mode=TwoWay,UpdateSourceTrigger=PropertyChanged}"/>
+                                </DataTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="DokanFsrvConfigType">
+                    <VisualState.Setters>
+                        <Setter Target="ConfigContentContainer.ContentTemplate">
+                            <Setter.Value>
+                                <DataTemplate x:DataType="ctrls:ItemConfigEditControl_DokanFsrvConfigVM">
+                                    <StackPanel Orientation="Vertical">
+                                        <ComboBox Header="Mount point" x:Name="MountPointComboBox"
+                                                  ItemsSource="{x:Bind MountPointComboBox_Items}"
+                                                  SelectedItem="{x:Bind MountPointComboBox_SelectedItem,Mode=TwoWay}"
+                                                  Margin="0,0,0,4"/>
+                                        <ToggleSwitch Header="Enable system directories"
+                                                      IsOn="{x:Bind EnableSysDirs,Mode=TwoWay}"/>
+                                        <ToggleSwitch Header="Mount as read-only"
+                                                      IsOn="{x:Bind ReadonlyDrive,Mode=TwoWay}"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </VisualState.Setters>
+                </VisualState>
+            </VisualStateGroup>
+            <!--
+            <VisualStateGroup x:Name="ConfigEditorType">
+                <VisualState x:Name="VisualEditor"/>
+                <VisualState x:Name="RawEditor">
+                    <VisualState.Setters>
+                        <Setter Target="ConfigContentContainer.Visibility" Value="Collapsed"/>
+                        <Setter Target="RawConfigTextBox.Visibility" Value="Visible"/>
+                    </VisualState.Setters>
+                </VisualState>
+            </VisualStateGroup>
+            -->
+        </VisualStateManager.VisualStateGroups>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- TODO: muxc:NavigationView has some focus issues, try to find out the root cause -->
+        <NavigationView x:Name="EditorTypeNV" PaneDisplayMode="Top" IsBackButtonVisible="Collapsed"
+                             IsSettingsVisible="False" Margin="0,0,0,4"
+                             ItemInvoked="EditorTypeNV_ItemInvoked">
+            <NavigationView.MenuItems>
+                <NavigationViewItem x:Name="VisualEditorNVI" Content="Visual"/>
+                <NavigationViewItem x:Name="RawEditorNVI" Content="Raw"/>
+            </NavigationView.MenuItems>
+        </NavigationView>
+        <ContentControl x:Name="ConfigContentContainer" Content="{x:Bind ConfigVM}" Grid.Row="1"
+                        HorizontalContentAlignment="Stretch" IsTabStop="False">
+            <ContentControl.ContentTemplate>
+                <DataTemplate>
+                    <TextBlock TextAlignment="Center" TextWrapping="WrapWholeWords">
+                        Visual Editor does not support current configuration.
+                    </TextBlock>
+                </DataTemplate>
+            </ContentControl.ContentTemplate>
+        </ContentControl>
+        <!--
+        <TextBox x:Name="RawConfigTextBox" AcceptsReturn="True" Grid.Row="1" Visibility="Collapsed"
+                 HorizontalAlignment="Stretch" FontFamily="Consolas" IsSpellCheckEnabled="False"/>
+        -->
+    </Grid>
+</UserControl>

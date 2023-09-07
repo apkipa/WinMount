@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include "Controls\ItemConfigEditControl.h"
+
 #include "Pages\MainFsPage.g.h"
 
 #include "MainPage.h"
@@ -24,6 +26,10 @@ namespace winrt::WinMount::App::Pages::implementation {
             Windows::UI::Xaml::RoutedEventArgs const&
         );
         void FsListView_SelectionChanged(
+            Windows::Foundation::IInspectable const&,
+            Windows::UI::Xaml::Controls::SelectionChangedEventArgs const& e
+        );
+        void DetailsAddNew_FsTypeComboBox_SelectionChanged(
             Windows::Foundation::IInspectable const&,
             Windows::UI::Xaml::Controls::SelectionChangedEventArgs const& e
         );

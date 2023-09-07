@@ -25,6 +25,8 @@ pub enum FileSystemError {
     ObjectNameNotFound,
     #[error("the object name already exists")]
     ObjectNameCollision,
+    #[error("the object name is invalid")]
+    ObjectNameInvalid,
     #[error("the directory trying to be deleted is not empty")]
     DirectoryNotEmpty,
     #[error(
