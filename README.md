@@ -9,4 +9,4 @@ WinMountCore: The daemon responsible for running filesystem services. Can also a
 WinMountGUI: A GUI client for WinMountCore. A standalone C++ XAML Islands project.
 
 > **Warning**
-> The application quality should be considered Pre-alpha, so never use this in production!
+> The application quality should be considered Pre-alpha (BSODs **may happen**), so never use this in production!

@@ -566,7 +566,7 @@ namespace WinMount {
                 // First check for existing responses
                 auto it = std::ranges::find_if(m_resp_queue, [&](MessageResponse const& v) {
                     return v.syn == syn;
-                    });
+                });
                 if (it != m_resp_queue.end()) {
                     auto result = std::move(*it);
                     m_resp_queue.erase(it);

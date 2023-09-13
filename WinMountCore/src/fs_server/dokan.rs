@@ -17,7 +17,7 @@ use dokan_sys::*;
 // use winapi::um::winbase::INFINITE;
 
 use super::FileSystemServer;
-use crate::fs_provider::FileSystemHandler;
+use crate::fs_provider::{FileSystemCharacteristics, FileSystemHandler};
 
 pub const DOKAN_FSERVER_ID: Uuid = uuid!("40612005-FA2F-49B8-820B-B0E7521602D7");
 
@@ -162,6 +162,7 @@ impl DokanFServer {
             .expect("object must exist in open objects list");
     }
     fn drop_open_objs(&mut self) {
+        // SAFETY: Files are uniquely returned since we have exclusive access
         self.open_objs.retain(|&k| {
             let _ = unsafe { Self::u64_to_owned_file(k) };
             false
@@ -224,8 +225,12 @@ impl super::FsServerProvider for DokanFServerProvider {
         config: serde_json::Value,
     ) -> anyhow::Result<Arc<dyn FileSystemServer>> {
         // TODO: Reject when requested mount point has been taken
-        let config: DokanFServerConfig = serde_json::from_value(config)?;
-        // TODO: enable_sys_dirs
+        let mut config: DokanFServerConfig = serde_json::from_value(config)?;
+        // Override some config
+        let fs_chars = fs.get_fs_characteristics()?;
+        if fs_chars.contains(FileSystemCharacteristics::ReadOnly) {
+            config.readonly_drive = true;
+        }
         let result = DokanFServer::new(fs, config)?;
         Ok(result)
     }

@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 #[derive(thiserror::Error, Debug)]
 pub enum FileSystemError {
-    #[error("other error")]
+    #[error("other error: {0}")]
     Other(#[from] anyhow::Error),
     #[error("the path does not exist")]
     ObjectPathNotFound,
@@ -39,6 +39,20 @@ pub enum FileSystemError {
     CannotDelete,
     #[error("the parameter specified in the request is not valid")]
     InvalidParameter,
+    #[error("the file or directory is corrupt and unreadable")]
+    FileCorruptError,
+    #[error("the end-of-file marker has been reached")]
+    EndOfFile,
+}
+
+impl From<FileSystemError> for std::io::Error {
+    fn from(value: FileSystemError) -> Self {
+        use std::io::ErrorKind;
+        match value {
+            FileSystemError::EndOfFile => Self::new(ErrorKind::UnexpectedEof, value),
+            _ => Self::new(ErrorKind::Other, value),
+        }
+    }
 }
 
 pub type FileSystemResult<T> = Result<T, FileSystemError>;
@@ -62,7 +76,7 @@ impl PathDelimiter {
     }
 }
 
-// Segmented path
+/// A borrowed segmented path with guarantee that no nul bytes exist.
 #[derive(Debug, Clone, Copy)]
 pub struct SegPath<'a> {
     raw_path: &'a str,
@@ -90,6 +104,12 @@ impl<'a> SegPath<'a> {
             delimiter,
         }
     }
+    /// Creates a new SegPath without checking for nul bytes.
+    ///
+    /// # Safety
+    ///
+    /// This function is unsafe as there is no guarantee that the given string has no nul bytes,
+    /// and improper use could lead to contract violation.
     pub unsafe fn new_unchecked(path: &'a str, delimiter: PathDelimiter) -> SegPath<'a> {
         SegPath {
             raw_path: path,
@@ -239,6 +259,13 @@ impl TryFrom<U16SegPath<'_>> for OwnedSegPath {
 }
 
 impl OwnedSegPath {
+    pub fn new(path: String, delimiter: PathDelimiter) -> Self {
+        Self {
+            raw_path: path,
+            delimiter,
+        }
+    }
+
     fn from_u16_path_lossy(path: U16SegPath<'_>) -> Self {
         let raw_path = path.raw_path.to_string_lossy();
         OwnedSegPath {
@@ -258,6 +285,7 @@ pub struct CreateFileInfo<'c> {
     pub new_file_created: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct FileStatInfo {
     pub index: u64,
     pub size: u64,
@@ -323,7 +351,7 @@ pub trait WideFindFilesDataFiller {
 
 // NOTE: wide functions should be overriden for better performance
 // TODO: get_path() should return Option<OwnedSegPath>
-pub trait File: Sync {
+pub trait File: Send + Sync {
     fn get_path(&self) -> Option<String> {
         None
     }
@@ -397,9 +425,59 @@ pub trait File: Sync {
         let mut filler = ToWideFindFilesDataFillerWrapper { filler };
         self.find_files_with_pattern(&pattern, &mut filler)
     }
+    fn read_at_exact(&self, offset: u64, buffer: &mut [u8]) -> FileSystemResult<()> {
+        let count = self.read_at(offset, buffer)?;
+        if count != buffer.len() as u64 {
+            return Err(FileSystemError::EndOfFile);
+        }
+        Ok(())
+    }
 }
 
+// Lifetime is bound to filesystem context
 pub type OwnedFile<'c> = Box<dyn File + 'c>;
+
+struct CursorFile<T> {
+    file: T,
+    position: u64,
+}
+impl<T> CursorFile<T> {
+    fn new(file: T) -> Self {
+        Self::with_position(file, 0)
+    }
+    fn with_position(file: T, position: u64) -> Self {
+        CursorFile { file, position }
+    }
+    fn get_position(&self) -> u64 {
+        self.position
+    }
+}
+impl<'a, T: AsRef<dyn File + 'a>> std::io::Read for CursorFile<T> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let file = self.file.as_ref();
+        let count = file.read_at(self.position, buf)?;
+        self.position += count;
+        Ok(count as _)
+    }
+}
+impl<'a, T: AsRef<dyn File + 'a>> std::io::Seek for CursorFile<T> {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        use std::io::SeekFrom;
+        match pos {
+            SeekFrom::Start(pos) => {
+                self.position = pos;
+            }
+            SeekFrom::Current(pos) => {
+                self.position = self.position.saturating_add_signed(pos);
+            }
+            SeekFrom::End(pos) => {
+                let file = self.file.as_ref();
+                self.position = file.get_stat()?.size.saturating_add_signed(pos);
+            }
+        }
+        Ok(self.position)
+    }
+}
 
 pub struct FileSystemSpaceInfo {
     /// Total number of bytes that are available to the calling user.
@@ -515,6 +593,17 @@ pub enum FileCreateDisposition {
     TruncateExisting = 5,
 }
 
+struct FsWithPath {
+    handler: Arc<dyn FileSystemHandler>,
+    path: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct FsWithPathConfig {
+    id: Uuid,
+    path: String,
+}
+
 pub struct FileSystem {
     id: Uuid,
     kind_id: Uuid,
@@ -561,8 +650,9 @@ pub fn init_fs_providers(
     mut register_fn: impl FnMut(Uuid, Box<dyn FsProvider>) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let mut reg = |p: Box<dyn FsProvider>| register_fn(p.get_id(), p);
-    reg(Box::new(memfs::MemFsProvider::new()))?;
     reg(Box::new(local::LocalFsProvider::new()))?;
+    reg(Box::new(memfs::MemFsProvider::new()))?;
+    reg(Box::new(archivefs::ArchiveFsProvider::new()))?;
     Ok(())
 }
 

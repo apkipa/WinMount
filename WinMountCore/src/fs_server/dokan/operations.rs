@@ -42,6 +42,13 @@ fn fs_error_to_ntstatus(err: FileSystemError) -> NTSTATUS {
         FileSystemError::DirectoryNotEmpty => STATUS_DIRECTORY_NOT_EMPTY,
         FileSystemError::AccessDenied => STATUS_ACCESS_DENIED,
         FileSystemError::NoSuchFile => STATUS_NO_SUCH_FILE,
+        FileSystemError::CannotDelete => STATUS_CANNOT_DELETE,
+        FileSystemError::InvalidParameter => STATUS_INVALID_PARAMETER,
+        FileSystemError::FileCorruptError => STATUS_FILE_CORRUPT_ERROR,
+        FileSystemError::Other(e) => {
+            log::warn!("Unknown FileSystemError: {e}");
+            STATUS_INTERNAL_ERROR
+        }
         _ => STATUS_INTERNAL_ERROR,
     }
 }
@@ -337,6 +344,9 @@ pub(super) extern "stdcall" fn find_files_with_pattern(
                     DokanIsNameInExpression(self.pattern, name.as_ptr(), self.ignore_case.into())
                         != 0
                 }
+            }
+            fn get_pattern_str(&self) -> Option<&U16CStr> {
+                unsafe { Some(U16CStr::from_ptr_str(self.pattern)) }
             }
         }
         let file_pattern = DokanFilePattern {

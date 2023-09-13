@@ -1,7 +1,6 @@
 use std::{
     borrow::Borrow,
     collections::BTreeMap,
-    num::NonZeroUsize,
     ops::Deref,
     sync::{Arc, RwLock},
     time::SystemTime,
@@ -9,6 +8,8 @@ use std::{
 
 use uuid::{uuid, Uuid};
 use widestring::{U16CStr, U16CString};
+
+use crate::util::{CaselessStr, CaselessString, CaselessU16CString};
 
 use super::{FileCreateDisposition, FileSystemError, FileSystemHandler};
 
@@ -94,110 +95,6 @@ impl Clone for Entry {
             Self::File(v) => Self::File(Arc::clone(v)),
             Self::Folder(v) => Self::Folder(Arc::clone(v)),
         }
-    }
-}
-
-struct CaselessStr(str);
-impl PartialEq for CaselessStr {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.eq_ignore_ascii_case(&other.0)
-    }
-}
-impl Eq for CaselessStr {}
-impl PartialOrd for CaselessStr {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for CaselessStr {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // We convert everything to lowercase for comparison
-        for (x, y) in self.0.bytes().zip(other.0.bytes()) {
-            let (x, y) = (x.to_ascii_lowercase(), y.to_ascii_lowercase());
-            let r = x.cmp(&y);
-            if r != std::cmp::Ordering::Equal {
-                return r;
-            }
-        }
-        self.0.len().cmp(&other.0.len())
-    }
-}
-impl CaselessStr {
-    fn new(value: &str) -> &Self {
-        unsafe { std::mem::transmute(value) }
-    }
-    fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-struct CaselessString(String);
-impl PartialEq for CaselessString {
-    fn eq(&self, other: &Self) -> bool {
-        self.deref().eq(other)
-    }
-}
-impl Eq for CaselessString {}
-impl PartialOrd for CaselessString {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for CaselessString {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.deref().cmp(other)
-    }
-}
-impl Deref for CaselessString {
-    type Target = CaselessStr;
-
-    fn deref(&self) -> &Self::Target {
-        CaselessStr::new(&self.0)
-    }
-}
-impl From<String> for CaselessString {
-    fn from(value: String) -> Self {
-        Self::new(value)
-    }
-}
-impl CaselessString {
-    fn new(value: String) -> Self {
-        Self(value)
-    }
-}
-
-struct CaselessU16CString(U16CString);
-impl PartialEq for CaselessU16CString {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.len() == other.0.len()
-            && std::iter::zip(self.0.as_slice(), other.0.as_slice()).all(|(&x, &y)| {
-                match (u8::try_from(x), u8::try_from(y)) {
-                    (Ok(x), Ok(y)) => x.eq_ignore_ascii_case(&y),
-                    _ => false,
-                }
-            })
-    }
-}
-impl Eq for CaselessU16CString {}
-impl PartialOrd for CaselessU16CString {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for CaselessU16CString {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // TODO: Fix cmp (does not correctly take case into consideration)
-        self.0.cmp(&other.0)
-    }
-}
-impl From<U16CString> for CaselessU16CString {
-    fn from(value: U16CString) -> Self {
-        Self::new(value)
-    }
-}
-impl CaselessU16CString {
-    fn new(value: U16CString) -> Self {
-        Self(value)
     }
 }
 

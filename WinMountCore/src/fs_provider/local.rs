@@ -243,6 +243,8 @@ impl super::FileSystemHandler for LocalFsHandler {
         let file_information = unsafe { file_information.assume_init() };
         let is_dir = (file_information.FileAttributes & FILE_ATTRIBUTE_DIRECTORY.0) != 0;
 
+        // log::debug!("NtCreateFile is dir: {is_dir}");
+
         Ok(super::CreateFileInfo {
             context: Box::new(LocalFsFile { h }),
             is_dir,
@@ -506,8 +508,10 @@ impl super::File for LocalFsFile {
         // TODO: Let super leak pattern string details (get_pattern_str)
         //       to speed up file listing
 
-        // 4KB buffer for file information, should be large enough
-        let mut buf = MaybeUninit::<[u8; 1024 * 4]>::uninit();
+        // log::debug!("Finding with pattern `{:?}`...", pattern.get_pattern_str());
+
+        // 16KB buffer for file information, should be large enough
+        let mut buf = MaybeUninit::<[u8; 1024 * 16]>::uninit();
 
         let mut io_status_block = MaybeUninit::<IO_STATUS_BLOCK>::uninit();
         let event = unsafe { CreateEventW(None, false, false, None) }
@@ -537,6 +541,7 @@ impl super::File for LocalFsFile {
                 BOOLEAN::from(true),
             )
         };
+        // log::debug!("NtQueryDirectoryFile status: {status:?}");
         status.map_err(|e| FileSystemError::Other(e.into()))?;
         unsafe {
             if WaitForSingleObject(event, INFINITE) != WAIT_OBJECT_0 {
@@ -546,13 +551,9 @@ impl super::File for LocalFsFile {
             }
         }
         let mut io_status_block = unsafe { io_status_block.assume_init() };
-        unsafe {
-            io_status_block
-                .Anonymous
-                .Status
-                .ok()
-                .map_err(|e| FileSystemError::Other(e.into()))?;
-        }
+        let status = unsafe { io_status_block.Anonymous.Status };
+        // log::debug!("NtQueryDirectoryFile status: {:?}", status);
+        status.ok().map_err(|e| FileSystemError::Other(e.into()))?;
         loop {
             // Fill results
             let mut entry_ptr = buf.as_ptr() as *const FILE_DIRECTORY_INFORMATION;
@@ -566,6 +567,7 @@ impl super::File for LocalFsFile {
                     )
                 };
                 let name = name.to_string_lossy();
+                // log::debug!("Found entry: {name}");
                 if pattern.check_name(&name) {
                     // TODO: Use correct index
                     let file_attr = nt_file_attributes_to_local(entry.FileAttributes);
@@ -609,7 +611,13 @@ impl super::File for LocalFsFile {
                     BOOLEAN::from(false),
                 )
             };
-            status.map_err(|e| FileSystemError::Other(e.into()))?;
+            // log::debug!("NtQueryDirectoryFile status: {status:?}");
+            if let Err(e) = status {
+                match NTSTATUS(e.code().0 & !0x1000_0000) {
+                    STATUS_NO_MORE_FILES => break,
+                    _ => return Err(FileSystemError::Other(e.into())),
+                }
+            }
             unsafe {
                 if WaitForSingleObject(event, INFINITE) != WAIT_OBJECT_0 {
                     return Err(FileSystemError::Other(anyhow::anyhow!(
@@ -618,6 +626,7 @@ impl super::File for LocalFsFile {
                 }
             }
             let status = unsafe { io_status_block.Anonymous.Status };
+            // log::debug!("NtQueryDirectoryFile status: {status:?}");
             match status {
                 STATUS_NO_MORE_FILES => break,
                 _ => status.ok().map_err(|e| FileSystemError::Other(e.into()))?,
