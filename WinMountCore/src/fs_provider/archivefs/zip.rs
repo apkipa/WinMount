@@ -4,9 +4,11 @@ use std::{
     io::{BufReader, Read, Seek},
     mem::MaybeUninit,
     sync::RwLock,
+    time::SystemTime,
 };
 
 use byteorder::{LittleEndian, ReadBytesExt};
+use windows::Win32::System::WindowsProgramming::DosDateTimeToFileTime;
 
 use crate::{
     fs_provider::{
@@ -76,11 +78,13 @@ const ZIP_LOCAL_FILE_HEADER_SIZE: u32 = 30;
 struct ZipFolderEntry {
     children: BTreeMap<CaselessString, ZipEntry>,
     index: u64,
+    dos_modify_time: SystemTime,
 }
 
 struct ZipFileEntry {
     data: ZipCentralDirRecord,
     index: u64,
+    dos_modify_time: SystemTime,
 }
 
 enum ZipEntry {
@@ -97,9 +101,9 @@ impl ZipFolderEntry {
             size: 0,
             is_dir: true,
             attributes: FileAttributes::DirectoryFile,
-            creation_time: ZERO_TIME,
-            last_access_time: ZERO_TIME,
-            last_write_time: ZERO_TIME,
+            creation_time: self.dos_modify_time,
+            last_access_time: self.dos_modify_time,
+            last_write_time: self.dos_modify_time,
         }
     }
 }
@@ -111,9 +115,9 @@ impl ZipFileEntry {
             size: self.data.uncompressed_size as _,
             is_dir: false,
             attributes: FileAttributes::empty(),
-            creation_time: ZERO_TIME,
-            last_access_time: ZERO_TIME,
-            last_write_time: ZERO_TIME,
+            creation_time: self.dos_modify_time,
+            last_access_time: self.dos_modify_time,
+            last_write_time: self.dos_modify_time,
         }
     }
 }
@@ -384,6 +388,80 @@ fn skip_local_file_record_with_central_no_verify(
     Ok(())
 }
 
+const ZIP_LOCAL_EXTRA_HID_ZIP64: u16 = 0x0001;
+const ZIP_LOCAL_EXTRA_HID_NTFS: u16 = 0x000a;
+
+struct ZipLocalFileNtfsExtraField {
+    last_modify_time: SystemTime,
+    last_access_time: SystemTime,
+    creation_time: SystemTime,
+}
+
+enum ZipLocalFileExtraField {
+    // TODO: More ZipLocalFileExtraField variants
+    // Zip64(),
+    NTFS(ZipLocalFileNtfsExtraField),
+}
+
+fn parse_local_file_extra_data(mut extra: &[u8]) -> anyhow::Result<Vec<ZipLocalFileExtraField>> {
+    fn parse_ntfs(mut extra: &[u8]) -> std::io::Result<ZipLocalFileNtfsExtraField> {
+        let reserved = extra.read_u32::<LittleEndian>()?;
+        let mut buf = Vec::with_capacity(u16::MAX as _);
+        let mut result = ZipLocalFileNtfsExtraField {
+            last_modify_time: SystemTime::UNIX_EPOCH,
+            last_access_time: SystemTime::UNIX_EPOCH,
+            creation_time: SystemTime::UNIX_EPOCH,
+        };
+        while !extra.is_empty() {
+            let tag = extra.read_u16::<LittleEndian>()?;
+            let size = extra.read_u16::<LittleEndian>()?;
+            // SAFETY: &[u8].read() does not read from buffer
+            unsafe {
+                extra.read_exact(std::slice::from_raw_parts_mut(buf.as_mut_ptr(), size as _))?;
+                buf.set_len(size as _);
+            }
+            match tag {
+                // SAFETY: SystemTime is FILETIME
+                0x0001 => unsafe {
+                    let mut extra = buf.as_slice();
+                    result.last_modify_time =
+                        std::mem::transmute(extra.read_u64::<LittleEndian>()?);
+                    result.last_access_time =
+                        std::mem::transmute(extra.read_u64::<LittleEndian>()?);
+                    result.creation_time = std::mem::transmute(extra.read_u64::<LittleEndian>()?);
+                },
+                _ => continue,
+            }
+        }
+        Ok(result)
+    }
+
+    let mut result = Vec::new();
+
+    // TODO: Do not allocate, read subslice instead
+    let mut buf = Vec::with_capacity(u16::MAX as _);
+
+    while !extra.is_empty() {
+        let header_id = extra.read_u16::<LittleEndian>()?;
+        let data_size = extra.read_u16::<LittleEndian>()?;
+        // SAFETY: &[u8].read() does not read from buffer
+        unsafe {
+            extra.read_exact(std::slice::from_raw_parts_mut(
+                buf.as_mut_ptr(),
+                data_size as _,
+            ))?;
+            buf.set_len(data_size as _);
+        }
+        result.push(match header_id {
+            ZIP_LOCAL_EXTRA_HID_NTFS => ZipLocalFileExtraField::NTFS(parse_ntfs(&buf)?),
+            // Unrecognized type, skip
+            _ => continue,
+        })
+    }
+
+    Ok(result)
+}
+
 impl<'a> ZipArchive<'a> {
     pub(super) fn new(
         file: OwnedFile<'a>,
@@ -410,6 +488,7 @@ impl<'a> ZipArchive<'a> {
             cd: Vec<ZipCentralDirRecord>,
             root_index: u64,
             non_unicode_compat: &ArchiveNonUnicodeCompatConfig,
+            root_modify_time: SystemTime,
         ) -> anyhow::Result<ZipFolderEntry> {
             let mut cd_tree = BTreeMap::new();
 
@@ -470,7 +549,7 @@ impl<'a> ZipArchive<'a> {
                 // Insert file
                 // SAFETY: Path is checked to contain no nul bytes
                 let path = unsafe { SegPath::new_unchecked(&path, PathDelimiter::Slash) };
-                let mut root_dir = &mut cd_tree;
+                let mut cur_dir_children = &mut cd_tree;
                 let mut iter = path.iter().peekable();
                 let mut filename = "";
                 while let Some(path) = iter.next() {
@@ -482,7 +561,7 @@ impl<'a> ZipArchive<'a> {
                     counter += 1;
 
                     let key = CaselessString::new(path.to_owned());
-                    root_dir = match root_dir.entry(key) {
+                    cur_dir_children = match cur_dir_children.entry(key) {
                         Occupied(e) => match e.into_mut() {
                             ZipEntry::File(_) => {
                                 anyhow::bail!("file name collides with folder in zip archive")
@@ -492,6 +571,7 @@ impl<'a> ZipArchive<'a> {
                         Vacant(e) => match e.insert(ZipEntry::Folder(ZipFolderEntry {
                             children: BTreeMap::new(),
                             index: calculate_hash(&(root_index, counter)),
+                            dos_modify_time: SystemTime::UNIX_EPOCH,
                         })) {
                             ZipEntry::Folder(e) => &mut e.children,
                             _ => unreachable!(),
@@ -503,11 +583,61 @@ impl<'a> ZipArchive<'a> {
                     continue;
                 }
                 let key = CaselessString::new(filename.to_owned());
-                match root_dir.entry(key) {
+                let dos_modify_time = unsafe {
+                    use bitstream_io::BitRead;
+                    let date = record.last_modify_date.to_le_bytes();
+                    let time = record.last_modify_time.to_le_bytes();
+                    let mut date_reader =
+                        bitstream_io::BitReader::endian(&date[..], bitstream_io::LittleEndian);
+                    let mut time_reader =
+                        bitstream_io::BitReader::endian(&time[..], bitstream_io::LittleEndian);
+                    let day = date_reader.read::<u8>(5).unwrap();
+                    let month = date_reader.read::<u8>(4).unwrap();
+                    let year = date_reader.read::<u16>(7).unwrap() + 1980;
+                    let second = time_reader.read::<u8>(5).unwrap() * 2;
+                    let minute = time_reader.read::<u8>(6).unwrap();
+                    let hour = time_reader.read::<u8>(5).unwrap();
+                    // log::debug!(
+                    //     "DOS time for `{filename}`: {}/{}/{} {}:{}:{}",
+                    //     year,
+                    //     month,
+                    //     day,
+                    //     hour,
+                    //     minute,
+                    //     second,
+                    // );
+                    /*
+                    let mut t = SystemTime::UNIX_EPOCH;
+                    // NOTE: DosDateTimeToFileTime incorrectly adds timezone offsets
+                    let _ = DosDateTimeToFileTime(
+                        record.last_modify_date,
+                        record.last_modify_time,
+                        &mut t as *mut _ as _,
+                    );
+                    t
+                    */
+                    // NOTE: DOS time is zone-unaware, so we use the local timezone
+                    //       as our best-effort guess
+                    use chrono::TimeZone;
+                    chrono::Local
+                        .with_ymd_and_hms(
+                            year as _,
+                            month as _,
+                            day as _,
+                            hour as _,
+                            minute as _,
+                            second as _,
+                        )
+                        .single()
+                        .map(|t| t.into())
+                        .unwrap_or(SystemTime::UNIX_EPOCH)
+                };
+                match cur_dir_children.entry(key) {
                     Occupied(_) => anyhow::bail!("file name collides in zip archive"),
                     Vacant(e) => e.insert(ZipEntry::File(ZipFileEntry {
                         index: calculate_hash(&(root_index, record.uncompressed_data_crc32)),
                         data: record,
+                        dos_modify_time,
                     })),
                 };
             }
@@ -515,6 +645,7 @@ impl<'a> ZipArchive<'a> {
             Ok(ZipFolderEntry {
                 children: cd_tree,
                 index: root_index,
+                dos_modify_time: root_modify_time,
             })
         }
 
@@ -538,7 +669,12 @@ impl<'a> ZipArchive<'a> {
             Err(e) => return Err((file, e)),
         };
 
-        let cd_tree = match build_file_tree(cd, file_stat.index, non_unicode_compat) {
+        let cd_tree = match build_file_tree(
+            cd,
+            file_stat.index,
+            non_unicode_compat,
+            file_stat.last_write_time,
+        ) {
             Ok(tree) => tree,
             Err(e) => return Err((file, e.into())),
         };
@@ -605,6 +741,8 @@ impl super::ArchiveHandler for ZipArchive<'_> {
             BorrowedZipEntry::Folder(&self.cd)
         };
 
+        let mut extra_ntfs = None;
+
         // Parse local header
         let data_reader = match entry {
             BorrowedZipEntry::File(e) => {
@@ -616,6 +754,13 @@ impl super::ArchiveHandler for ZipArchive<'_> {
                     CursorFile::with_position(&self.file, e.data.local_file_header_offset as _);
                 // let local_record = parse_local_file_record(&mut cursor_file)?;
                 skip_local_file_record_with_central_no_verify(&mut cursor_file, &e.data)?;
+                let extra_fields = parse_local_file_extra_data(&e.data.extra_data)?;
+                for i in extra_fields {
+                    match i {
+                        ZipLocalFileExtraField::NTFS(field) => extra_ntfs = Some(field),
+                        _ => (),
+                    }
+                }
                 let data_start = cursor_file.get_position();
                 match e.data.compression_method {
                     ZIP_COMPRESSION_STORE => ZipFileReader::Store(ZipFileStoreReader {
@@ -643,6 +788,7 @@ impl super::ArchiveHandler for ZipArchive<'_> {
                 root: self,
                 entry,
                 reader: data_reader,
+                extra_ntfs,
             }),
             is_dir: entry.is_dir(),
         })
@@ -672,6 +818,7 @@ pub struct ZipFile<'a> {
     // entry: Option<&'a ZipEntry>,
     entry: BorrowedZipEntry<'a>,
     reader: ZipFileReader,
+    extra_ntfs: Option<ZipLocalFileNtfsExtraField>,
 }
 
 // impl<'a> ZipFile<'a> {
@@ -769,6 +916,12 @@ impl super::ArchiveFile for ZipFile<'_> {
         }
     }
     fn get_stat(&self) -> FileSystemResult<FileStatInfo> {
+        let mut stat = self.entry.get_file_stat_info();
+        if let Some(field) = &self.extra_ntfs {
+            stat.last_write_time = field.last_modify_time;
+            stat.last_access_time = field.last_access_time;
+            stat.creation_time = field.creation_time;
+        }
         Ok(self.entry.get_file_stat_info())
     }
     fn find_files_with_pattern(
