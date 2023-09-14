@@ -230,11 +230,6 @@ impl EncodingConverter {
 // NOTE: Result path will be `\`-separated
 // WARN: Input must be valid
 fn concat_path(base: &str, path: super::SegPath) -> super::OwnedSegPath {
-    // let path = if base.is_empty() {
-    //     path.get_path().to_owned()
-    // } else {
-    //     format!("{}\\{}", base, path.get_path())
-    // };
     let path = if let super::PathDelimiter::BackSlash = path.get_delimiter() {
         format!("{}\\{}", base, path.get_path())
     } else {
@@ -274,10 +269,6 @@ fn open_archive_from_file<'a>(
     file: super::OwnedFile<'a>,
     non_unicode_compat: &ArchiveNonUnicodeCompatConfig,
 ) -> anyhow::Result<Box<dyn ArchiveHandler + 'a>> {
-    // TODO: open_archive_from_file
-    // anyhow::bail!("unimplemented")
-    // TODO: Check header (ArchiveHandler should have a check method returning
-    //       Yes, No, Maybe(?))
     match zip::ZipArchive::new(file, non_unicode_compat) {
         Ok(x) => Ok(Box::new(x)),
         Err((_, e)) => Err(e.into()),
@@ -306,9 +297,6 @@ impl super::FileSystemHandler for ArchiveFsHandler {
 
         if let Some((front_path, back_path)) = split_archive_path(filename) {
             // Handle archive
-
-            // log::debug!("archivefs: Opening `{}` / `{}`...", front_path.get_path(), back_path.get_path());
-
             let mut entries = self.open_archives.lock().unwrap();
 
             match entries.entry(CaselessString::new(front_path.get_path().to_string())) {

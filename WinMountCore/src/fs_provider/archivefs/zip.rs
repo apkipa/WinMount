@@ -3,6 +3,7 @@ use std::{
     collections::BTreeMap,
     io::{BufReader, Read, Seek},
     mem::MaybeUninit,
+    sync::RwLock,
 };
 
 use byteorder::{LittleEndian, ReadBytesExt};
@@ -16,12 +17,6 @@ use crate::{
 };
 
 use super::{ArchiveNonUnicodeCompatConfig, ArchiveNonUnicodeEncoding};
-
-// #[derive(thiserror::Error, Debug)]
-// pub enum ZipError {
-//     #[error("other error")]
-//     Other(#[from] anyhow::Error),
-// }
 
 const ZIP_COMPRESSION_STORE: u16 = 0;
 const ZIP_COMPRESSION_DEFLATE: u16 = 8;
@@ -368,106 +363,11 @@ fn skip_local_file_record_with_central_no_verify(
     let uncompressed_size = buf_view.read_u32::<LittleEndian>()?;
     let len_file_name = buf_view.read_u16::<LittleEndian>()?;
     let len_extra_data = buf_view.read_u16::<LittleEndian>()?;
-    let local_sizes = (len_file_name, len_extra_data);
-    if (local_sizes.0 as _, local_sizes.1 as _)
-        != (central.file_name.len(), central.extra_data.len())
-    {
-        anyhow::bail!("local header size mismatches with central directory");
-    }
+    // TODO: Some fields seems to be missing in central directory, despite local having these?
     file.seek(std::io::SeekFrom::Current(
-        (local_sizes.0 + local_sizes.1) as _,
+        (len_file_name + len_extra_data) as _,
     ))?;
     Ok(())
-}
-
-// Detects source encoding and converts to UTF-8 string
-/*
-fn smart_bytes_to_str(bytes: &[u8]) -> String {
-    let mut detector = chardetng::EncodingDetector::new();
-    detector.feed(bytes, true);
-    // TODO: Allow user to change encoding preferences
-    let encoding = detector.guess(None, true);
-    let (str, _) = encoding.decode_without_bom_handling(bytes);
-    // log::debug!("String: `{str}`, encoding: `{}`", encoding.name());
-    str.into_owned()
-}
-*/
-fn smart_bytes_to_str(bytes: &[u8]) -> String {
-    use windows::core::PCSTR;
-    use windows::Win32::Globalization::*;
-
-    unsafe fn convert(bytes: &[u8]) -> Result<String, UErrorCode> {
-        const U_ZERO_ERROR: UErrorCode = UErrorCode(0);
-
-        let u_success = |c: UErrorCode| c.0 <= 0;
-        let u_failure = |c: UErrorCode| c.0 > 0;
-        let u_ok = |c: UErrorCode| u_success(c).then_some(()).ok_or(c);
-        let mut error_code = U_ZERO_ERROR;
-
-        let bytes_ptr = bytes.as_ptr();
-        let bytes_len = bytes.len();
-
-        // Detect encoding
-        let detector = ucsdet_open(&mut error_code);
-        u_ok(error_code)?;
-        scopeguard::defer! {
-            ucsdet_close(detector);
-        }
-        ucsdet_setText(detector, PCSTR(bytes_ptr), bytes_len as _, &mut error_code);
-        let mut matches_found = 0;
-        let matches = ucsdet_detectAll(detector, &mut matches_found, &mut error_code);
-        u_ok(error_code)?;
-        if matches_found == 0 {
-            return Err(U_ZERO_ERROR);
-        }
-        // for &i in std::slice::from_raw_parts_mut(matches, matches_found as _) {
-        //     // TODO...
-        // }
-        let best_match = *matches;
-        let best_match_name = ucsdet_getName(best_match, &mut error_code);
-        u_ok(error_code)?;
-
-        // Convert to UTF-8
-        let converter_from_name = best_match_name;
-        let converter_to_name = PCSTR(b"UTF-8\0".as_ptr());
-        let final_size = ucnv_convert(
-            converter_to_name,
-            converter_from_name,
-            PCSTR(std::ptr::null()),
-            0,
-            PCSTR(bytes_ptr),
-            bytes_len as _,
-            &mut error_code,
-        );
-        if final_size == 0 {
-            return Err(U_ZERO_ERROR);
-        }
-        let mut str_buf = Vec::with_capacity(final_size as _);
-        error_code = U_ZERO_ERROR;
-        ucnv_convert(
-            converter_to_name,
-            converter_from_name,
-            PCSTR(str_buf.as_mut_ptr()),
-            final_size,
-            PCSTR(bytes_ptr),
-            bytes_len as _,
-            &mut error_code,
-        );
-        u_ok(error_code)?;
-        str_buf.set_len(final_size as _);
-        // let converter = ucnv_open(best_match_name, &mut error_code);
-        // u_ok(error_code)?;
-        // scopeguard::defer!{
-        //     ucnv_close(converter);
-        // }
-
-        Ok(String::from_utf8_unchecked(str_buf))
-    }
-
-    match unsafe { convert(bytes) } {
-        Ok(s) => s,
-        Err(e) => panic!("system-bundled ICU invoke failed: {e:?}"),
-    }
 }
 
 impl<'a> ZipArchive<'a> {
@@ -514,7 +414,7 @@ impl<'a> ZipArchive<'a> {
                     detector.feed(&[], true);
                     let encoding = detector.guess(None, false);
 
-                    log::debug!("Guessing encoding: picked {encoding:?}");
+                    // log::debug!("Guessing encoding: picked {encoding:?}");
 
                     ArchiveNonUnicodeEncoding::Specified(encoding.name().to_owned())
                 }
@@ -522,33 +422,10 @@ impl<'a> ZipArchive<'a> {
             };
             let converter = super::EncodingConverter::new(&encoding);
 
-            /*
-            // Guess zip archive encoding
-            // TODO: Let user provide options
-            let encoding = {
-                let mut detector = chardetng::EncodingDetector::new();
-                // NOTE: Some archives are mixing UTF-8 and non-UTF-8 entries together,
-                //       so we need to filter out UTF-8 ones
-                for record in cd
-                    .iter()
-                    .filter(|x| simdutf8::basic::from_utf8(&x.file_name).is_err())
-                {
-                    detector.feed(&record.file_name, false);
-                }
-                detector.feed(&[], true);
-                detector.guess(None, false)
-            };
-            */
-
+            // NOTE: Used for "unique" index generation
             let mut counter: u64 = 0;
 
             for record in cd {
-                /*
-                let path = simdutf8::basic::from_utf8(&record.file_name)
-                    .map(|s| std::borrow::Cow::Borrowed(s))
-                    .unwrap_or_else(|_| encoding.decode_without_bom_handling(&record.file_name).0);
-                */
-                // TODO: Use named constant
                 let has_utf8_flag = (record.general_purpose_bitflag & ZIP_GPFLAGS_EFS) != 0;
                 let path = if has_utf8_flag && !non_unicode_compat.ignore_utf8_flags {
                     String::from_utf8_lossy(&record.file_name)
@@ -561,15 +438,9 @@ impl<'a> ZipArchive<'a> {
                         converter.convert(&record.file_name)
                     }
                 };
-                // let path = converter.convert(&record.file_name);
 
                 // log::debug!("Filename: {:?} -> `{path}`", &record.file_name);
 
-                /*
-                // NOTE: We guess encoding for every single entry, since there are zip archives
-                //       mixing different encodings of file names together.
-                let path = smart_bytes_to_str(&record.file_name);
-                */
                 if path.contains('\0') || path.starts_with("/") {
                     // Bad file name
                     continue;
@@ -728,13 +599,10 @@ impl super::ArchiveHandler for ZipArchive<'_> {
                     // TODO: Support entrypted archives
                     return Err(FileSystemError::FileCorruptError);
                 }
-                // let mut cursor_file = BufReader::new(
-                //     CursorFile::with_position(&self.file, e.data.local_file_header_offset as _));
-                // parse_local_file_record(&mut cursor_file);
-                // let pos = cursor_file.seek(std::io::SeekFrom::Current(0))?;
                 let mut cursor_file =
                     CursorFile::with_position(&self.file, e.data.local_file_header_offset as _);
-                let local_record = parse_local_file_record(&mut cursor_file)?;
+                // let local_record = parse_local_file_record(&mut cursor_file)?;
+                skip_local_file_record_with_central_no_verify(&mut cursor_file, &e.data)?;
                 let data_start = cursor_file.get_position();
                 match e.data.compression_method {
                     ZIP_COMPRESSION_STORE => ZipFileReader::Store(ZipFileStoreReader {
@@ -742,39 +610,11 @@ impl super::ArchiveHandler for ZipArchive<'_> {
                         size: e.data.uncompressed_size as _,
                     }),
                     ZIP_COMPRESSION_DEFLATE => {
-                        // TODO: Use own deflate implementation to support better random access,
-                        //       so that we just need ~32KB for every file handle
-                        let source_len = e.data.compressed_size as _;
-                        let mut source = Vec::with_capacity(source_len);
-                        unsafe {
-                            cursor_file
-                                .read_exact(std::slice::from_raw_parts_mut(
-                                    source.as_mut_ptr(),
-                                    source_len,
-                                ))
-                                .map_err(anyhow::Error::from)?;
-                            source.set_len(source_len);
-                        }
-                        let data_len = e.data.uncompressed_size as _;
-                        let mut data = Vec::with_capacity(data_len);
-                        let mut decompressor = libdeflater::Decompressor::new();
-                        unsafe {
-                            decompressor
-                                .deflate_decompress(
-                                    &source,
-                                    std::slice::from_raw_parts_mut(data.as_mut_ptr(), data_len),
-                                )
-                                .map_err(anyhow::Error::from)?;
-                            data.set_len(data_len);
-                        }
-                        ZipFileReader::Deflate(ZipFileDeflateReader { data })
-                        /*
-                        let mut data = vec![0; e.data.uncompressed_size as _];
-                        let mut decoder =
-                            flate2::bufread::DeflateDecoder::new(BufReader::new(cursor_file));
-                        decoder.read_exact(&mut data).map_err(anyhow::Error::from)?;
-                        ZipFileReader::Deflate(ZipFileDeflateReader { data })
-                        */
+                        // Decompression is very expensive, so delay the operation
+                        ZipFileReader::Deflate(ZipFileDeflateReader {
+                            start: data_start,
+                            data: RwLock::new(None),
+                        })
                     }
                     _ => {
                         log::warn!("zip: unsupported compression method");
@@ -802,7 +642,8 @@ struct ZipFileStoreReader {
 }
 
 struct ZipFileDeflateReader {
-    data: Vec<u8>,
+    start: u64,
+    data: RwLock<Option<Vec<u8>>>,
 }
 
 enum ZipFileReader {
@@ -851,10 +692,53 @@ impl super::ArchiveFile for ZipFile<'_> {
                 file.read_at(r.start + offset, &mut buffer[..read_len])
             }
             ZipFileReader::Deflate(r) => {
-                if offset as usize >= r.data.len() {
+                let data = loop {
+                    {
+                        let guard = r.data.read().unwrap();
+                        if guard.is_some() {
+                            break guard;
+                        }
+                    }
+
+                    // Actually start reading file content
+                    *r.data.write().unwrap() = Some({
+                        // TODO: Use own deflate implementation to support better random access,
+                        //       so that we just need ~32KB for every file handle
+                        let mut cursor_file = CursorFile::with_position(&self.root.file, r.start);
+                        let source_len = entry.data.compressed_size as _;
+                        let mut source = Vec::with_capacity(source_len);
+                        unsafe {
+                            cursor_file
+                                .read_exact(std::slice::from_raw_parts_mut(
+                                    source.as_mut_ptr(),
+                                    source_len,
+                                ))
+                                .map_err(anyhow::Error::from)?;
+                            source.set_len(source_len);
+                        }
+                        let data_len = entry.data.uncompressed_size as _;
+                        let mut data = Vec::with_capacity(data_len);
+                        let mut decompressor = libdeflater::Decompressor::new();
+                        unsafe {
+                            decompressor
+                                .deflate_decompress(
+                                    &source,
+                                    std::slice::from_raw_parts_mut(data.as_mut_ptr(), data_len),
+                                )
+                                .map_err(anyhow::Error::from)?;
+                            data.set_len(data_len);
+                        }
+                        data
+                    });
+                    break r.data.read().unwrap();
+                };
+                // SAFETY: Reader is already initialized
+                let data = unsafe { data.as_ref().unwrap_unchecked() };
+
+                if offset as usize >= data.len() {
                     Ok(0)
                 } else {
-                    let mut src = &r.data[offset as _..];
+                    let mut src = &data[offset as _..];
                     src.read(buffer)
                         .map(|x| x as _)
                         .map_err(|e| FileSystemError::Other(e.into()))
