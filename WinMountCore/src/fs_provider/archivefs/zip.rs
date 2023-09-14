@@ -194,8 +194,22 @@ fn parse_eocd_record(
         let size_central_dir = buf.read_u32::<LittleEndian>()?;
         let offset_central_dir = buf.read_u32::<LittleEndian>()?;
         let size_comment = buf.read_u16::<LittleEndian>()?;
-        if buf.len() != size_comment as usize {
-            anyhow::bail!("EOCD record has bad comment data");
+        match buf.len().cmp(&(size_comment as _)) {
+            std::cmp::Ordering::Greater => {
+                let len = buf.len();
+                log::warn!(
+                    "zip: excessive data after EOCD record ({} / {} byte{})",
+                    size_comment,
+                    len,
+                    if len == 1 { "" } else { "s" }
+                );
+                // Shrink buffer
+                buf = &buf[..size_comment as _];
+            }
+            std::cmp::Ordering::Less => {
+                anyhow::bail!("EOCD record has bad comment data");
+            }
+            _ => (),
         }
         let comment = buf.to_owned();
         Ok(ZipEndOfCentralDirRecord {
@@ -398,7 +412,6 @@ impl<'a> ZipArchive<'a> {
             non_unicode_compat: &ArchiveNonUnicodeCompatConfig,
         ) -> anyhow::Result<ZipFolderEntry> {
             let mut cd_tree = BTreeMap::new();
-            // TODO: Check for Unicode flag
 
             let encoding = match &non_unicode_compat.encoding_override {
                 ArchiveNonUnicodeEncoding::AutoDetect => {
@@ -407,7 +420,7 @@ impl<'a> ZipArchive<'a> {
                     //       so we need to filter out UTF-8 ones
                     for record in cd
                         .iter()
-                        .filter(|x| simdutf8::basic::from_utf8(&x.file_name).is_err())
+                        .filter(|x| (x.general_purpose_bitflag & ZIP_GPFLAGS_EFS) == 0)
                     {
                         detector.feed(&record.file_name, false);
                     }
@@ -701,35 +714,44 @@ impl super::ArchiveFile for ZipFile<'_> {
                     }
 
                     // Actually start reading file content
-                    *r.data.write().unwrap() = Some({
-                        // TODO: Use own deflate implementation to support better random access,
-                        //       so that we just need ~32KB for every file handle
-                        let mut cursor_file = CursorFile::with_position(&self.root.file, r.start);
-                        let source_len = entry.data.compressed_size as _;
-                        let mut source = Vec::with_capacity(source_len);
-                        unsafe {
-                            cursor_file
-                                .read_exact(std::slice::from_raw_parts_mut(
-                                    source.as_mut_ptr(),
-                                    source_len,
-                                ))
-                                .map_err(anyhow::Error::from)?;
-                            source.set_len(source_len);
+                    match *r.data.write().unwrap() {
+                        ref mut data @ None => {
+                            *data = Some({
+                                // TODO: Use own deflate implementation to support better random access,
+                                //       so that we just need ~32KB for every file handle
+                                let mut cursor_file =
+                                    CursorFile::with_position(&self.root.file, r.start);
+                                let source_len = entry.data.compressed_size as _;
+                                let mut source = Vec::with_capacity(source_len);
+                                unsafe {
+                                    cursor_file
+                                        .read_exact(std::slice::from_raw_parts_mut(
+                                            source.as_mut_ptr(),
+                                            source_len,
+                                        ))
+                                        .map_err(anyhow::Error::from)?;
+                                    source.set_len(source_len);
+                                }
+                                let data_len = entry.data.uncompressed_size as _;
+                                let mut data = Vec::with_capacity(data_len);
+                                let mut decompressor = libdeflater::Decompressor::new();
+                                unsafe {
+                                    decompressor
+                                        .deflate_decompress(
+                                            &source,
+                                            std::slice::from_raw_parts_mut(
+                                                data.as_mut_ptr(),
+                                                data_len,
+                                            ),
+                                        )
+                                        .map_err(anyhow::Error::from)?;
+                                    data.set_len(data_len);
+                                }
+                                data
+                            })
                         }
-                        let data_len = entry.data.uncompressed_size as _;
-                        let mut data = Vec::with_capacity(data_len);
-                        let mut decompressor = libdeflater::Decompressor::new();
-                        unsafe {
-                            decompressor
-                                .deflate_decompress(
-                                    &source,
-                                    std::slice::from_raw_parts_mut(data.as_mut_ptr(), data_len),
-                                )
-                                .map_err(anyhow::Error::from)?;
-                            data.set_len(data_len);
-                        }
-                        data
-                    });
+                        _ => (),
+                    }
                     break r.data.read().unwrap();
                 };
                 // SAFETY: Reader is already initialized

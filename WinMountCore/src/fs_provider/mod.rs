@@ -533,7 +533,6 @@ pub trait FileSystemHandler: Send + Sync {
     // fn delete_file(&self, path: SegPath) -> FileSystemResult<()>;
     // fn wide_delete_file(&self, path: U16SegPath) -> FileSystemResult<()>;
     fn get_fs_free_space(&self) -> FileSystemResult<FileSystemSpaceInfo>;
-    // TODO: Characteristics: read-only, case-sensitive, ...
     fn get_fs_characteristics(&self) -> FileSystemResult<FileSystemCharacteristics>;
 }
 
