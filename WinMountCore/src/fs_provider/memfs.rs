@@ -481,21 +481,28 @@ impl super::File for MemFsFile<'_> {
                         Ok(real_len as _)
                     }
                 } else {
-                    let final_size = offset as usize + buffer.len();
+                    let final_len = offset as usize + buffer.len();
                     let orig_len = f.data.len();
                     let mut should_update_len = false;
-                    if final_size > orig_len {
-                        f.data.reserve(final_size - orig_len);
+                    if final_len > orig_len {
+                        f.data.reserve(final_len - orig_len);
                         should_update_len = true;
                     }
+                    // TODO: SAFETY statement
                     unsafe {
+                        // Clear hole between old data and new data
+                        if offset as usize > orig_len {
+                            let data_space = offset as usize - orig_len;
+                            f.data.as_mut_ptr().add(orig_len).write_bytes(0, data_space);
+                        }
+                        // Copy data
                         std::ptr::copy_nonoverlapping(
                             buffer.as_ptr(),
                             f.data.as_mut_ptr().add(offset as _),
                             buffer.len(),
                         );
                         if should_update_len {
-                            f.data.set_len(final_size);
+                            f.data.set_len(final_len);
                         }
                     }
                     Ok(buffer.len() as _)

@@ -263,6 +263,15 @@ fn split_archive_path(path: super::SegPath) -> Option<(super::SegPath, super::Se
             })
         })
         .next()
+    /*
+    let mut iter = path.iter();
+    while let Some(s) = iter.next() {
+        if is_name_archive(s) {
+            return Some(iter.into_split());
+        }
+    }
+    None
+    */
 }
 
 fn open_archive_from_file<'a>(

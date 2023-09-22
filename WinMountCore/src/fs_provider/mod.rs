@@ -129,6 +129,7 @@ impl<'a> SegPath<'a> {
             cur_path: "",
             rest_path: self.path,
             delimiter: self.delimiter,
+            orig_path: self.path,
         }
     }
 }
@@ -137,6 +138,37 @@ pub struct SegPathIter<'a> {
     cur_path: &'a str,
     rest_path: &'a str,
     delimiter: PathDelimiter,
+    orig_path: &'a str,
+}
+
+impl<'a> SegPathIter<'a> {
+    fn into_split(self) -> (SegPath<'a>, SegPath<'a>) {
+        if self.rest_path.as_ptr() == self.orig_path.as_ptr() {
+            unsafe {
+                let front = SegPath::new_unchecked("", self.delimiter);
+                let back = SegPath::new_unchecked(self.orig_path, self.delimiter);
+                (front, back)
+            }
+        } else {
+            unsafe {
+                if self.rest_path.is_empty() {
+                    let front = SegPath::new_unchecked(self.orig_path, self.delimiter);
+                    let back = SegPath::new_unchecked("", self.delimiter);
+                    (front, back)
+                } else {
+                    let orig_ptr = self.orig_path.as_ptr();
+                    // NOTE: Slash is 1 byte long
+                    let len = self.rest_path.as_ptr().offset_from(orig_ptr) - 1;
+                    let front_str = std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+                        orig_ptr, len as _,
+                    ));
+                    let front = SegPath::new_unchecked(front_str, self.delimiter);
+                    let back = SegPath::new_unchecked(self.rest_path, self.delimiter);
+                    (front, back)
+                }
+            }
+        }
+    }
 }
 
 impl<'a> Iterator for SegPathIter<'a> {
@@ -215,6 +247,7 @@ impl<'a> Iterator for U16SegPathIter<'a> {
                 .next();
             if let Some(start) = start {
                 let end = start + 1;
+                // SAFETY: Indices are valid
                 unsafe { Some((x.get_unchecked(..start), x.get_unchecked(end..))) }
             } else {
                 None

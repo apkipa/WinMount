@@ -547,12 +547,14 @@ namespace WinMount {
                             that->m_guard = std::move(guard);
                             that->m_that->m_resp_resumes.erase(it);
                             // TODO: We can also clear stale responses?
-                            ::winrt::impl::resume_background(that->m_self);
+                            // NOTE: We MUST resume on current thread, or UB will be invoked
+                            //       (unique_lock cannot be moved across threads)
+                            that->m_self();
                         }
                         else {
                             // Already resumed or pending resume, do nothing
                         }
-                        }, this);
+                    }, this);
                 }
 
             private:

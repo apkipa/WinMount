@@ -597,25 +597,6 @@ impl<'a> ZipArchive<'a> {
                     let second = time_reader.read::<u8>(5).unwrap() * 2;
                     let minute = time_reader.read::<u8>(6).unwrap();
                     let hour = time_reader.read::<u8>(5).unwrap();
-                    // log::debug!(
-                    //     "DOS time for `{filename}`: {}/{}/{} {}:{}:{}",
-                    //     year,
-                    //     month,
-                    //     day,
-                    //     hour,
-                    //     minute,
-                    //     second,
-                    // );
-                    /*
-                    let mut t = SystemTime::UNIX_EPOCH;
-                    // NOTE: DosDateTimeToFileTime incorrectly adds timezone offsets
-                    let _ = DosDateTimeToFileTime(
-                        record.last_modify_date,
-                        record.last_modify_time,
-                        &mut t as *mut _ as _,
-                    );
-                    t
-                    */
                     // NOTE: DOS time is zone-unaware, so we use the local timezone
                     //       as our best-effort guess
                     use chrono::TimeZone;
