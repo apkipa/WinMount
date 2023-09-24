@@ -8,7 +8,6 @@ use std::{
 };
 
 use byteorder::{LittleEndian, ReadBytesExt};
-use windows::Win32::System::WindowsProgramming::DosDateTimeToFileTime;
 
 use crate::{
     fs_provider::{
@@ -584,7 +583,7 @@ impl<'a> ZipArchive<'a> {
                     continue;
                 }
                 let key = CaselessString::new(filename.to_owned());
-                let dos_modify_time = unsafe {
+                let dos_modify_time = {
                     use bitstream_io::BitRead;
                     let date = record.last_modify_date.to_le_bytes();
                     let time = record.last_modify_time.to_le_bytes();
@@ -631,7 +630,12 @@ impl<'a> ZipArchive<'a> {
             })
         }
 
-        let file = open_ctx.file;
+        // We only handle files instead of folders
+        if open_ctx.get_is_dir() {
+            return Err(FileSystemError::FileCorruptError);
+        }
+
+        let file = open_ctx.get_file();
         let file_stat = file.get_stat()?;
         let eocd = parse_eocd_record(file, file_stat.size)?;
         check_end_of_central_dir_record(&eocd)?;

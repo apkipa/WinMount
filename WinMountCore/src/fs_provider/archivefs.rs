@@ -13,7 +13,6 @@ use std::{
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_repr::{Deserialize_repr, Serialize_repr};
 use uuid::{uuid, Uuid};
 
 use crate::util::{CaselessStr, CaselessString};
@@ -116,7 +115,8 @@ struct ArchiveFsHandler {
     in_path: FsWithPath,
     // TODO: Correctly annonate lifetime of ArchiveHandlerWithFiles
     open_archives: Mutex<BTreeMap<CaselessString, Box<ArchiveHandlerWithFiles<'static>>>>,
-    non_unicode_compat_cfg: ArchiveGlobalNonUnicodeCompatConfig,
+    archive_rules: Vec<ArchiveOpenRuleConfig>,
+    non_unicode_compat: ArchiveGlobalNonUnicodeCompatConfig,
 }
 
 #[derive(Clone)]
@@ -284,14 +284,25 @@ impl EncodingConverter {
     }
 }
 
-const ARCHIVE_PATTERNS: &[&str] = &[".zip"];
-
-fn is_name_archive(name: &str) -> bool {
-    ARCHIVE_PATTERNS.iter().any(|x| name.ends_with(x))
+// NOTE: Honors neither handles_file nor handles_file
+fn is_name_archive<'a>(
+    name: &str,
+    rules: &'a Vec<ArchiveOpenRuleConfig>,
+) -> Option<&'a ArchiveOpenRuleConfig> {
+    rules
+        .iter()
+        .filter(|x| x.path_pattern.is_match(name))
+        .next()
 }
 
-// TODO: Support user-defined archive name filters
-fn split_archive_path(path: super::SegPath) -> Option<(super::SegPath, super::SegPath)> {
+fn split_archive_path<'a, 'b>(
+    path: super::SegPath<'b>,
+    rules: &'a Vec<ArchiveOpenRuleConfig>,
+) -> Option<(
+    super::SegPath<'b>,
+    super::SegPath<'b>,
+    &'a ArchiveOpenRuleConfig,
+)> {
     use super::SegPath;
     let delimiter = path.get_delimiter();
     let path = path.get_path();
@@ -299,11 +310,11 @@ fn split_archive_path(path: super::SegPath) -> Option<(super::SegPath, super::Se
         .chain(std::iter::once((path.len(), "")))
         .filter_map(|(x, _)| {
             let (front_path, back_path) = path.split_at(x);
-            is_name_archive(front_path).then_some(unsafe {
+            is_name_archive(front_path, rules).map(|x| unsafe {
                 // SAFETY: Source is already SegPath
                 let front_path = SegPath::new_unchecked(front_path, delimiter);
                 let back_path = SegPath::new_unchecked(back_path, delimiter);
-                (front_path, back_path)
+                (front_path, back_path, x)
             })
         })
         .next()
@@ -349,14 +360,14 @@ impl Drop for ArchiveOpenDepFileGuard<'_> {
         let mut dep_files = self.ctx.dep_files.lock().unwrap();
         match dep_files.entry(self.path.clone()) {
             Occupied(mut e) => {
-                let mut info = e.get_mut();
+                let info = e.get_mut();
                 info.ref_count -= 1;
                 if info.ref_count == 0 {
                     e.remove();
                 }
             }
             Vacant(_) => {
-                panic!("Dropping a non-existent archive dep file");
+                panic!("dropping a non-existent archive dep file");
             }
         }
     }
@@ -365,6 +376,7 @@ impl Drop for ArchiveOpenDepFileGuard<'_> {
 #[derive(Clone, Copy)]
 struct ArchiveHandlerOpenContext<'a> {
     file: &'a dyn super::File,
+    is_dir: bool,
     ctx: &'a ArchiveHandlerWithFiles<'a>,
     fs: &'a FsWithPath,
 }
@@ -408,25 +420,23 @@ impl<'a> ArchiveHandlerOpenContext<'a> {
             is_dir: info.is_dir,
         })
     }
-}
-
-/*
-fn open_archive_from_file<'a>(
-    file: super::OwnedFile<'a>,
-    non_unicode_compat: &ArchiveNonUnicodeCompatConfig,
-) -> anyhow::Result<Box<dyn ArchiveHandler + 'a>> {
-    match zip::ZipArchive::new(file, non_unicode_compat) {
-        Ok(x) => Ok(Box::new(x)),
-        Err((_, e)) => Err(e.into()),
+    pub fn get_file(&self) -> &'a dyn super::File {
+        self.file
+    }
+    pub fn get_is_dir(&self) -> bool {
+        self.is_dir
     }
 }
-*/
+
 fn open_archive_from_file<'a>(
     open_ctx: ArchiveHandlerOpenContext<'a>,
+    archive_rule: &ArchiveOpenRuleConfig,
     non_unicode_compat: &ArchiveNonUnicodeCompatConfig,
 ) -> anyhow::Result<Box<dyn ArchiveHandler + 'a>> {
-    let archive = zip::ZipArchive::new(open_ctx, non_unicode_compat)?;
-    Ok(Box::new(archive))
+    Ok(Box::new(match archive_rule.handler_kind {
+        ArchiveHandlerKind::Zip => zip::ZipArchive::new(open_ctx, non_unicode_compat)?,
+        _ => anyhow::bail!("unsupported archive handler type"),
+    }))
 }
 
 impl super::FileSystemHandler for ArchiveFsHandler {
@@ -461,7 +471,30 @@ impl super::FileSystemHandler for ArchiveFsHandler {
             Ok(())
         };
 
-        if let Some((front_path, back_path)) = split_archive_path(filename) {
+        let handle_raw_file_fn = || {
+            // NOTE: We must open the file first to make sure file exists
+            let raw_create_result = self.in_path.handler.create_file(
+                filename,
+                FileDesiredAccess::Read,
+                FileAttributes::empty(),
+                FileShareAccess::Read,
+                FileCreateDisposition::OpenExisting,
+                create_options,
+            )?;
+
+            if desired_access.intersects(UNWANTED_ACCESS) {
+                return Err(FileSystemError::AccessDenied);
+            }
+            Ok(super::CreateFileInfo {
+                context: Box::new(ArchiveFsFile::new_raw(self, raw_create_result.context)),
+                is_dir: raw_create_result.is_dir,
+                new_file_created: false,
+            })
+        };
+
+        if let Some((front_path, back_path, archive_rule)) =
+            split_archive_path(filename, &self.archive_rules)
+        {
             // Handle archive
             let mut entries = self.open_archives.lock().unwrap();
 
@@ -494,6 +527,7 @@ impl super::FileSystemHandler for ArchiveFsHandler {
                     Ok(super::CreateFileInfo {
                         context: unsafe {
                             Box::new(ArchiveFsFile::new_archive(
+                                self,
                                 index,
                                 &self.open_archives,
                                 back_path.get_path().into(),
@@ -513,14 +547,22 @@ impl super::FileSystemHandler for ArchiveFsHandler {
                         FileCreateDisposition::OpenExisting,
                         FileCreateOptions::empty(),
                     )?;
-                    if raw_create_result.is_dir {
-                        // TODO: This is actually a folder, do not handle as an archive
-                        return Err(FileSystemError::NotImplemented);
+
+                    // Check whether rule covers current file kind
+                    let rule_covers = if raw_create_result.is_dir {
+                        archive_rule.handles_folder
+                    } else {
+                        archive_rule.handles_file
+                    };
+                    if !rule_covers {
+                        // Treat as raw creation instead
+                        drop(raw_create_result);
+                        return handle_raw_file_fn();
                     }
 
                     // TODO: Optimize with further borrowing and avoid allocations
-                    let non_unicode_compat_cfg = self
-                        .non_unicode_compat_cfg
+                    let non_unicode_compat = self
+                        .non_unicode_compat
                         .entries
                         .iter()
                         .filter(|x| x.path_pattern.is_match(orig_filename.get_path()))
@@ -528,7 +570,7 @@ impl super::FileSystemHandler for ArchiveFsHandler {
                         .map(|x| Cow::Borrowed(&x.config))
                         .unwrap_or_else(|| {
                             Cow::Owned(ArchiveNonUnicodeCompatConfig {
-                                encoding_override: self.non_unicode_compat_cfg.encoding.clone(),
+                                encoding_override: self.non_unicode_compat.encoding.clone(),
                                 ..Default::default()
                             })
                         });
@@ -558,14 +600,16 @@ impl super::FileSystemHandler for ArchiveFsHandler {
 
                     let open_context = ArchiveHandlerOpenContext {
                         file: root_file,
+                        is_dir: raw_create_result.is_dir,
                         ctx: unsafe { std::mem::transmute(archive_with_files.as_ref()) },
                         fs: &self.in_path,
                     };
-                    let archive = open_archive_from_file(open_context, &non_unicode_compat_cfg)
-                        .map_err(|e| {
-                            log::warn!("Open archive `{}` failed: {e}", front_path.get_path());
-                            FileSystemError::FileCorruptError
-                        })?;
+                    let archive =
+                        open_archive_from_file(open_context, archive_rule, &non_unicode_compat)
+                            .map_err(|e| {
+                                log::warn!("Open archive `{}` failed: {e}", front_path.get_path());
+                                FileSystemError::FileCorruptError
+                            })?;
                     let archive = unsafe {
                         let archive: Box<dyn ArchiveHandler> = std::mem::transmute(archive);
                         archive_with_files.handler =
@@ -603,6 +647,7 @@ impl super::FileSystemHandler for ArchiveFsHandler {
                     e.insert(unsafe { std::mem::transmute(archive_with_files) });
                     let context = unsafe {
                         Box::new(ArchiveFsFile::new_archive(
+                            self,
                             index,
                             &self.open_archives,
                             back_path.get_path().into(),
@@ -619,24 +664,7 @@ impl super::FileSystemHandler for ArchiveFsHandler {
             }
         } else {
             // Open raw file
-            // NOTE: We must open the file first to make sure file exists
-            let raw_create_result = self.in_path.handler.create_file(
-                filename,
-                FileDesiredAccess::Read,
-                FileAttributes::empty(),
-                FileShareAccess::Read,
-                FileCreateDisposition::OpenExisting,
-                create_options,
-            )?;
-
-            if desired_access.intersects(UNWANTED_ACCESS) {
-                return Err(FileSystemError::AccessDenied);
-            }
-            Ok(super::CreateFileInfo {
-                context: Box::new(ArchiveFsFile::new_raw(raw_create_result.context)),
-                is_dir: raw_create_result.is_dir,
-                new_file_created: false,
-            })
+            handle_raw_file_fn()
         }
     }
     fn get_fs_free_space(&self) -> super::FileSystemResult<super::FileSystemSpaceInfo> {
@@ -667,16 +695,18 @@ enum ArchiveFsFileContext<'a> {
     },
 }
 
-struct ArchiveFsFile<'a> {
+struct ArchiveFsFile<'a, 'h: 'a> {
+    handler: &'h ArchiveFsHandler,
     context: ArchiveFsFileContext<'a>,
 }
 
-unsafe impl Send for ArchiveFsFile<'_> {}
-unsafe impl Sync for ArchiveFsFile<'_> {}
+unsafe impl Send for ArchiveFsFile<'_, '_> {}
+unsafe impl Sync for ArchiveFsFile<'_, '_> {}
 
-impl<'a> ArchiveFsFile<'a> {
-    fn new_raw(file: super::OwnedFile<'a>) -> Self {
+impl<'a, 'h: 'a> ArchiveFsFile<'a, 'h> {
+    fn new_raw(handler: &'h ArchiveFsHandler, file: super::OwnedFile<'a>) -> Self {
         ArchiveFsFile {
+            handler,
             context: ArchiveFsFileContext::Raw(file),
         }
     }
@@ -684,12 +714,14 @@ impl<'a> ArchiveFsFile<'a> {
     //       ArchiveFsFile
     // WARN: Insert into entries right before calling this method!
     unsafe fn new_archive(
+        handler: &'h ArchiveFsHandler,
         index: CaselessString,
         entries: &'a Mutex<BTreeMap<CaselessString, Box<ArchiveHandlerWithFiles<'static>>>>,
         filename: CaselessString,
         file: *const dyn ArchiveFile,
     ) -> Self {
         ArchiveFsFile {
+            handler,
             context: ArchiveFsFileContext::Archive {
                 index,
                 entries,
@@ -700,7 +732,7 @@ impl<'a> ArchiveFsFile<'a> {
     }
 }
 
-impl Drop for ArchiveFsFile<'_> {
+impl Drop for ArchiveFsFile<'_, '_> {
     fn drop(&mut self) {
         use std::collections::btree_map::Entry::*;
 
@@ -745,7 +777,7 @@ impl Drop for ArchiveFsFile<'_> {
     }
 }
 
-impl super::File for ArchiveFsFile<'_> {
+impl super::File for ArchiveFsFile<'_, '_> {
     fn read_at(&self, offset: u64, buffer: &mut [u8]) -> super::FileSystemResult<u64> {
         match &self.context {
             ArchiveFsFileContext::Raw(f) => f.read_at(offset, buffer),
@@ -803,27 +835,40 @@ impl super::File for ArchiveFsFile<'_> {
     ) -> super::FileSystemResult<()> {
         match &self.context {
             ArchiveFsFileContext::Raw(f) => {
-                struct ArchiveFsFiller<'a> {
+                struct ArchiveFsFiller<'a, 'b, 'h> {
+                    this: &'a ArchiveFsFile<'b, 'h>,
                     filler: &'a mut dyn super::FindFilesDataFiller,
                 }
-                impl super::FindFilesDataFiller for ArchiveFsFiller<'_> {
+                impl super::FindFilesDataFiller for ArchiveFsFiller<'_, '_, '_> {
                     fn fill_data(
                         &mut self,
                         name: &str,
                         stat: &super::FileStatInfo,
                     ) -> Result<(), ()> {
-                        if stat.is_dir || !is_name_archive(name) {
+                        if stat.is_dir {
                             return self.filler.fill_data(name, stat);
                         }
-                        // We need to transform files into folders here
-                        let mut stat = *stat;
-                        stat.is_dir = true;
-                        stat.attributes |= FileAttributes::DirectoryFile;
-                        stat.size = 0;
-                        self.filler.fill_data(name, &stat)
+                        let check_file_kind_fn = |rule: &ArchiveOpenRuleConfig| {
+                            if stat.is_dir {
+                                rule.handles_folder
+                            } else {
+                                rule.handles_file
+                            }
+                        };
+                        match is_name_archive(name, &self.this.handler.archive_rules) {
+                            Some(rule) if check_file_kind_fn(rule) => {
+                                // We need to transform files into folders here
+                                let mut stat = *stat;
+                                stat.is_dir = true;
+                                stat.attributes |= FileAttributes::DirectoryFile;
+                                stat.size = 0;
+                                self.filler.fill_data(name, &stat)
+                            }
+                            _ => self.filler.fill_data(name, stat),
+                        }
                     }
                 }
-                f.find_files_with_pattern(pattern, &mut ArchiveFsFiller { filler })
+                f.find_files_with_pattern(pattern, &mut ArchiveFsFiller { this: self, filler })
             }
             ArchiveFsFileContext::Archive { file, .. } => {
                 let file = unsafe { &**file };
@@ -864,12 +909,14 @@ struct ArchiveFsConfig {
 impl ArchiveFsHandler {
     fn new(
         in_path: FsWithPath,
-        non_unicode_compat_cfg: ArchiveGlobalNonUnicodeCompatConfig,
+        archive_rules: Vec<ArchiveOpenRuleConfig>,
+        non_unicode_compat: ArchiveGlobalNonUnicodeCompatConfig,
     ) -> Self {
         ArchiveFsHandler {
             in_path,
             open_archives: Mutex::new(BTreeMap::new()),
-            non_unicode_compat_cfg,
+            archive_rules,
+            non_unicode_compat,
         }
     }
 }
@@ -900,6 +947,7 @@ impl super::FsProvider for ArchiveFsProvider {
         };
         Ok(Arc::new(ArchiveFsHandler::new(
             in_path,
+            config.archive_rules,
             config.non_unicode_compat,
         )))
     }
@@ -907,7 +955,7 @@ impl super::FsProvider for ArchiveFsProvider {
         serde_json::to_value(ArchiveFsConfig {
             input_path: Default::default(),
             archive_rules: vec![ArchiveOpenRuleConfig {
-                path_pattern: Regex::new(r"\.zip$").unwrap(),
+                path_pattern: Regex::new(r"\.(?i)zip$").unwrap(),
                 handler_kind: ArchiveHandlerKind::Zip,
                 handles_file: true,
                 handles_folder: false,
