@@ -18,7 +18,7 @@ use crate::{
     util::{calculate_hash, CaselessStr, CaselessString},
 };
 
-use super::{ArchiveNonUnicodeCompatConfig, ArchiveNonUnicodeEncoding};
+use super::{ArchiveHandlerOpenContext, ArchiveNonUnicodeCompatConfig, ArchiveNonUnicodeEncoding};
 
 const ZIP_COMPRESSION_STORE: u16 = 0;
 const ZIP_COMPRESSION_DEFLATE: u16 = 8;
@@ -162,7 +162,7 @@ impl BorrowedZipEntry<'_> {
 }
 
 pub struct ZipArchive<'a> {
-    file: OwnedFile<'a>,
+    file: &'a dyn crate::fs_provider::File,
     file_index: u64,
     eocd: ZipEndOfCentralDirRecord,
     cd: ZipFolderEntry,
@@ -171,7 +171,7 @@ pub struct ZipArchive<'a> {
 // TODO: Support Zip64
 
 fn parse_eocd_record(
-    file: &OwnedFile,
+    file: &dyn crate::fs_provider::File,
     file_len: u64,
 ) -> Result<ZipEndOfCentralDirRecord, FileSystemError> {
     const END_SIGNATURE: u32 = 0x06054b50;
@@ -258,7 +258,7 @@ fn parse_eocd_record(
 }
 
 fn parse_central_dir_record_list(
-    file: &OwnedFile,
+    file: &dyn crate::fs_provider::File,
     eocd: &ZipEndOfCentralDirRecord,
 ) -> Result<Vec<ZipCentralDirRecord>, FileSystemError> {
     const CD_HEADER_SIGNATURE: u32 = 0x02014b50;
@@ -464,9 +464,9 @@ fn parse_local_file_extra_data(mut extra: &[u8]) -> anyhow::Result<Vec<ZipLocalF
 
 impl<'a> ZipArchive<'a> {
     pub(super) fn new(
-        file: OwnedFile<'a>,
+        open_ctx: ArchiveHandlerOpenContext<'a>,
         non_unicode_compat: &ArchiveNonUnicodeCompatConfig,
-    ) -> Result<Self, (OwnedFile<'a>, FileSystemError)> {
+    ) -> FileSystemResult<Self> {
         use std::collections::btree_map::Entry::*;
 
         fn check_end_of_central_dir_record(
@@ -571,6 +571,7 @@ impl<'a> ZipArchive<'a> {
                         Vacant(e) => match e.insert(ZipEntry::Folder(ZipFolderEntry {
                             children: BTreeMap::new(),
                             index: calculate_hash(&(root_index, counter)),
+                            // TODO: Change to correct time
                             dos_modify_time: SystemTime::UNIX_EPOCH,
                         })) {
                             ZipEntry::Folder(e) => &mut e.children,
@@ -630,35 +631,19 @@ impl<'a> ZipArchive<'a> {
             })
         }
 
-        let file_stat = match file.get_stat() {
-            Ok(stat) => stat,
-            Err(e) => return Err((file, e)),
-        };
+        let file = open_ctx.file;
+        let file_stat = file.get_stat()?;
+        let eocd = parse_eocd_record(file, file_stat.size)?;
+        check_end_of_central_dir_record(&eocd)?;
 
-        let eocd = match parse_eocd_record(&file, file_stat.size) {
-            Ok(record) => {
-                if let Err(e) = check_end_of_central_dir_record(&record) {
-                    return Err((file, e.into()));
-                }
-                record
-            }
-            Err(e) => return Err((file, e)),
-        };
+        let cd = parse_central_dir_record_list(file, &eocd)?;
 
-        let cd = match parse_central_dir_record_list(&file, &eocd) {
-            Ok(record) => record,
-            Err(e) => return Err((file, e)),
-        };
-
-        let cd_tree = match build_file_tree(
+        let cd_tree = build_file_tree(
             cd,
             file_stat.index,
             non_unicode_compat,
             file_stat.last_write_time,
-        ) {
-            Ok(tree) => tree,
-            Err(e) => return Err((file, e.into())),
-        };
+        )?;
 
         Ok(ZipArchive {
             file,
@@ -802,22 +787,6 @@ pub struct ZipFile<'a> {
     extra_ntfs: Option<ZipLocalFileNtfsExtraField>,
 }
 
-// impl<'a> ZipFile<'a> {
-//     fn new(root: &'a ZipArchive<'a>, path: &'a CaselessStr) -> Self {
-//         Self { root, path }
-//     }
-// }
-
-// impl<'a> ZipFile<'a> {
-//     fn handle_entry<T>(&self, func: impl FnOnce(&'a ZipEntry) -> T) -> T {
-//         match self.entry {
-//             Some(e) => func(e),
-//             None => func(&ZipEntry::Folder(self.root.cd)),
-//         }
-//         // func()
-//     }
-// }
-
 impl super::ArchiveFile for ZipFile<'_> {
     fn read_at(&self, offset: u64, buffer: &mut [u8]) -> FileSystemResult<u64> {
         let entry = match self.entry {
@@ -903,7 +872,7 @@ impl super::ArchiveFile for ZipFile<'_> {
             stat.last_access_time = field.last_access_time;
             stat.creation_time = field.creation_time;
         }
-        Ok(self.entry.get_file_stat_info())
+        Ok(stat)
     }
     fn find_files_with_pattern(
         &self,

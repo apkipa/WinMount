@@ -10,7 +10,6 @@ use std::{
 };
 
 use uuid::{uuid, Uuid};
-use widestring::U16CStr;
 
 use dokan_sys::*;
 
@@ -124,6 +123,11 @@ impl DokanFServer {
                     if config.readonly_drive {
                         options |= DOKAN_OPTION_WRITE_PROTECT;
                     }
+                    if config.enable_debug {
+                        options |= DOKAN_OPTION_DEBUG
+                            | DOKAN_OPTION_STDERR
+                            | DOKAN_OPTION_DISPATCH_DRIVER_LOGS;
+                    }
                     options
                 },
                 GlobalContext: global_context,
@@ -204,8 +208,10 @@ struct DokanFServerConfig {
     /// Whether to allow system directories to be created and accessed. It's strongly
     /// discouraged to enable this, as it can possibly mess up the filesystem.
     enable_sys_dirs: bool,
-    // Mount filesystem as read-only.
+    /// Mount filesystem as read-only.
     readonly_drive: bool,
+    /// Enable Dokan debug output.
+    enable_debug: bool,
 }
 
 pub struct DokanFServerProvider {}
@@ -241,6 +247,7 @@ impl super::FsServerProvider for DokanFServerProvider {
             mount_point: "M:\\".to_owned(),
             enable_sys_dirs: false,
             readonly_drive: false,
+            enable_debug: false,
         })
         .unwrap()
     }

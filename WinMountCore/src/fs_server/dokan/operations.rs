@@ -105,6 +105,8 @@ pub(super) extern "stdcall" fn create_file(
     dokan_file_info: PDOKAN_FILE_INFO,
 ) -> NTSTATUS {
     use widestring::u16cstr;
+    // TODO: We shouldn't allow reentrancy (e.g. having a filesystem pointing to self);
+    //       try detecting such situation
     wrap_ffi(|| {
         let dokan_file_info = unsafe { &mut *dokan_file_info };
         let server = server_from_dokan_file_info(dokan_file_info);

@@ -467,6 +467,13 @@ pub trait File: Send + Sync {
     }
 }
 
+// TODO: Is this AsRef good enough?
+impl<'a> AsRef<dyn File + 'a> for dyn File + 'a {
+    fn as_ref(&self) -> &(dyn File + 'a) {
+        self
+    }
+}
+
 // Lifetime is bound to filesystem context
 pub type OwnedFile<'c> = Box<dyn File + 'c>;
 
@@ -628,6 +635,51 @@ pub enum FileCreateDisposition {
 struct FsWithPath {
     handler: Arc<dyn FileSystemHandler>,
     path: String,
+}
+impl FsWithPath {
+    fn create_file(
+        &self,
+        filename: SegPath,
+        desired_access: FileDesiredAccess,
+        file_attributes: FileAttributes,
+        share_access: FileShareAccess,
+        create_disposition: FileCreateDisposition,
+        create_options: FileCreateOptions,
+    ) -> FileSystemResult<CreateFileInfo<'_>> {
+        let filename = concat_path(&self.path, filename);
+        let filename = filename.as_non_owned();
+        self.handler.create_file(
+            filename,
+            desired_access,
+            file_attributes,
+            share_access,
+            create_disposition,
+            create_options,
+        )
+    }
+}
+
+// NOTE: Result path will be `\`-separated
+// WARN: Input must be valid
+fn concat_path(base: &str, path: SegPath) -> OwnedSegPath {
+    let path = if let PathDelimiter::BackSlash = path.get_delimiter() {
+        format!("{}\\{}", base, path.get_path())
+    } else {
+        let mut path = format!("{}\\{}", base, path.get_path());
+        make_uniform_path(&mut path);
+        path
+    };
+    OwnedSegPath::new(path, PathDelimiter::BackSlash)
+}
+
+// NOTE: Uniform path always uses back slash
+fn make_uniform_path(path: &mut str) {
+    // SAFETY: The result string is still valid UTF-8
+    for b in unsafe { path.as_bytes_mut() } {
+        if *b == '/' as u8 {
+            *b = '\\' as u8;
+        }
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Default)]

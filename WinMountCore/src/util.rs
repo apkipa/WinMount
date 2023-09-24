@@ -95,6 +95,11 @@ impl From<String> for CaselessString {
         Self::new(value)
     }
 }
+impl From<&str> for CaselessString {
+    fn from(value: &str) -> Self {
+        Self::new(value.to_owned())
+    }
+}
 impl AsRef<CaselessStr> for CaselessString {
     fn as_ref(&self) -> &CaselessStr {
         &self

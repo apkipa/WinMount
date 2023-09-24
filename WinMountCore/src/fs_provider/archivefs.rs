@@ -2,8 +2,9 @@ mod zip;
 
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     convert::Infallible,
+    ptr::NonNull,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -48,18 +49,73 @@ trait ArchiveHandler: Send {
     ) -> super::FileSystemResult<ArchiveHandlerOpenFileInfo<'_>>;
 }
 
+struct ArchiveHandlerWithFilesDepFilesInfo<'a> {
+    file: super::OwnedFile<'a>,
+    is_dir: bool,
+    ref_count: u64,
+}
+struct ArchiveHandlerWithFilesChildFilesInfo {
+    file: OwnedArchiveFile<'static>,
+    is_dir: bool,
+    ref_count: u64,
+}
+
+unsafe impl Send for ArchiveHandlerWithFiles<'_> {}
+
 struct ArchiveHandlerWithFiles<'a> {
-    handler: Box<dyn ArchiveHandler + 'a>,
-    // files: Vec<OwnedArchiveFile>,
-    // TODO: Do we really need AtomicU64 here?
-    open_count: AtomicU64,
+    handler: Option<NonNull<dyn ArchiveHandler>>,
+    // Files used by handler
+    dep_files: Mutex<BTreeMap<CaselessString, ArchiveHandlerWithFilesDepFilesInfo<'a>>>,
+    // Files created from handler
+    files: Mutex<BTreeMap<CaselessString, ArchiveHandlerWithFilesChildFilesInfo>>,
+    // NOTE: base_path is already combined with FsWithPath.path
+    base_path: CaselessString,
+    path: CaselessString,
+}
+impl<'a> ArchiveHandlerWithFiles<'a> {
+    unsafe fn new(
+        handler: Option<NonNull<dyn ArchiveHandler>>,
+        base_path: CaselessString,
+        filename: CaselessString,
+        file: super::OwnedFile<'a>,
+        is_dir: bool,
+    ) -> Self {
+        let mut dep_files = BTreeMap::new();
+        dep_files.insert(
+            filename.clone(),
+            ArchiveHandlerWithFilesDepFilesInfo {
+                file,
+                is_dir,
+                ref_count: 1,
+            },
+        );
+        Self {
+            handler,
+            dep_files: Mutex::new(dep_files),
+            files: Mutex::new(BTreeMap::new()),
+            base_path,
+            path: filename,
+        }
+    }
+}
+impl Drop for ArchiveHandlerWithFiles<'_> {
+    fn drop(&mut self) {
+        // self.files.lock().unwrap().retain(|_, v| unsafe {
+        //     let _ = Box::from_raw(v.file);
+        //     false
+        // });
+        self.files.get_mut().unwrap().clear();
+        if let Some(handler) = self.handler.take() {
+            let _ = unsafe { Box::from_raw(handler.as_ptr()) };
+        }
+    }
 }
 
 // NOTE: ArchiveFs is primaily read-only
 struct ArchiveFsHandler {
     in_path: FsWithPath,
     // TODO: Correctly annonate lifetime of ArchiveHandlerWithFiles
-    open_archives: Mutex<BTreeMap<CaselessString, ArchiveHandlerWithFiles<'static>>>,
+    open_archives: Mutex<BTreeMap<CaselessString, Box<ArchiveHandlerWithFiles<'static>>>>,
     non_unicode_compat_cfg: ArchiveGlobalNonUnicodeCompatConfig,
 }
 
@@ -115,6 +171,7 @@ impl Default for ArchiveNonUnicodeCompatConfig {
 
 #[derive(Serialize, Deserialize, Clone)]
 struct ArchiveNonUnicodeCompatConfigEntry {
+    // TODO: Describe haystack format
     #[serde(with = "serde_regex")]
     path_pattern: Regex,
     #[serde(flatten)]
@@ -227,19 +284,6 @@ impl EncodingConverter {
     }
 }
 
-// NOTE: Result path will be `\`-separated
-// WARN: Input must be valid
-fn concat_path(base: &str, path: super::SegPath) -> super::OwnedSegPath {
-    let path = if let super::PathDelimiter::BackSlash = path.get_delimiter() {
-        format!("{}\\{}", base, path.get_path())
-    } else {
-        let mut path = format!("{}\\{}", base, path.get_path());
-        make_uniform_path(&mut path);
-        path
-    };
-    super::OwnedSegPath::new(path, super::PathDelimiter::BackSlash)
-}
-
 const ARCHIVE_PATTERNS: &[&str] = &[".zip"];
 
 fn is_name_archive(name: &str) -> bool {
@@ -274,6 +318,99 @@ fn split_archive_path(path: super::SegPath) -> Option<(super::SegPath, super::Se
     */
 }
 
+struct ArchiveHandlerOpenContextOpenInfo<'a> {
+    context: ArchiveOpenDepFileGuard<'a>,
+    is_dir: bool,
+}
+
+struct ArchiveOpenDepFileGuard<'a> {
+    file: &'a dyn super::File,
+    path: CaselessString,
+    ctx: &'a ArchiveHandlerWithFiles<'a>,
+}
+impl<'a> ArchiveOpenDepFileGuard<'a> {
+    fn new(
+        file: &'a dyn super::File,
+        path: CaselessString,
+        ctx: &'a ArchiveHandlerWithFiles<'a>,
+    ) -> Self {
+        Self { file, path, ctx }
+    }
+}
+impl<'a> std::ops::Deref for ArchiveOpenDepFileGuard<'a> {
+    type Target = dyn super::File + 'a;
+    fn deref(&self) -> &Self::Target {
+        self.file
+    }
+}
+impl Drop for ArchiveOpenDepFileGuard<'_> {
+    fn drop(&mut self) {
+        use std::collections::btree_map::Entry::*;
+        let mut dep_files = self.ctx.dep_files.lock().unwrap();
+        match dep_files.entry(self.path.clone()) {
+            Occupied(mut e) => {
+                let mut info = e.get_mut();
+                info.ref_count -= 1;
+                if info.ref_count == 0 {
+                    e.remove();
+                }
+            }
+            Vacant(_) => {
+                panic!("Dropping a non-existent archive dep file");
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ArchiveHandlerOpenContext<'a> {
+    file: &'a dyn super::File,
+    ctx: &'a ArchiveHandlerWithFiles<'a>,
+    fs: &'a FsWithPath,
+}
+impl<'a> ArchiveHandlerOpenContext<'a> {
+    // NOTE: The base path will be automatically added
+    fn open_file(
+        &self,
+        filename: super::SegPath,
+    ) -> super::FileSystemResult<ArchiveHandlerOpenContextOpenInfo<'a>> {
+        use std::collections::btree_map::Entry::*;
+        let filename = super::concat_path(self.ctx.base_path.as_str(), filename);
+        let filename = filename.as_non_owned();
+        let filename_str: CaselessString = filename.get_path().into();
+        let mut dep_files = self.ctx.dep_files.lock().unwrap();
+        let info = match dep_files.entry(filename_str.clone()) {
+            Occupied(e) => {
+                let info = e.into_mut();
+                info.ref_count += 1;
+                info
+            }
+            Vacant(e) => {
+                let create_info = self.fs.handler.create_file(
+                    filename,
+                    FileDesiredAccess::Read,
+                    FileAttributes::empty(),
+                    FileShareAccess::Read,
+                    FileCreateDisposition::OpenExisting,
+                    FileCreateOptions::empty(),
+                )?;
+                e.insert(ArchiveHandlerWithFilesDepFilesInfo {
+                    file: create_info.context,
+                    is_dir: create_info.is_dir,
+                    ref_count: 1,
+                })
+            }
+        };
+        // TODO: SAFETY statement
+        let file = unsafe { std::mem::transmute(&*info.file) };
+        Ok(ArchiveHandlerOpenContextOpenInfo {
+            context: ArchiveOpenDepFileGuard::new(file, filename_str, self.ctx),
+            is_dir: info.is_dir,
+        })
+    }
+}
+
+/*
 fn open_archive_from_file<'a>(
     file: super::OwnedFile<'a>,
     non_unicode_compat: &ArchiveNonUnicodeCompatConfig,
@@ -282,6 +419,14 @@ fn open_archive_from_file<'a>(
         Ok(x) => Ok(Box::new(x)),
         Err((_, e)) => Err(e.into()),
     }
+}
+*/
+fn open_archive_from_file<'a>(
+    open_ctx: ArchiveHandlerOpenContext<'a>,
+    non_unicode_compat: &ArchiveNonUnicodeCompatConfig,
+) -> anyhow::Result<Box<dyn ArchiveHandler + 'a>> {
+    let archive = zip::ZipArchive::new(open_ctx, non_unicode_compat)?;
+    Ok(Box::new(archive))
 }
 
 impl super::FileSystemHandler for ArchiveFsHandler {
@@ -298,32 +443,64 @@ impl super::FileSystemHandler for ArchiveFsHandler {
 
         let orig_filename = filename;
 
-        let filename = concat_path(&self.in_path.path, filename);
+        let filename = super::concat_path(&self.in_path.path, filename);
         let filename = filename.as_non_owned();
 
         const UNWANTED_ACCESS: FileDesiredAccess =
             FileDesiredAccess::Full.union(FileDesiredAccess::Write);
 
+        // TODO: SAFETY statement
+
+        let ensure_file_kind_fn = |is_dir: bool| {
+            if create_options.contains(FileCreateOptions::DirectoryFile) && !is_dir {
+                return Err(FileSystemError::NotADirectory);
+            }
+            if create_options.contains(FileCreateOptions::NonDirectoryFile) && is_dir {
+                return Err(FileSystemError::FileIsADirectory);
+            }
+            Ok(())
+        };
+
         if let Some((front_path, back_path)) = split_archive_path(filename) {
             // Handle archive
             let mut entries = self.open_archives.lock().unwrap();
 
-            match entries.entry(CaselessString::new(front_path.get_path().to_string())) {
+            match entries.entry(front_path.get_path().into()) {
                 Occupied(e) => {
-                    let entry = e.get();
-                    // TODO: Maybe we can share opened file instances?
-                    let open_result = entry.handler.open_file(back_path)?;
-                    let index = e.key().clone();
-                    entry.open_count.fetch_add(1, Ordering::AcqRel);
+                    let entry = e.into_mut();
+                    let files = entry.files.get_mut().unwrap();
+                    let file_info = match files.entry(back_path.get_path().into()) {
+                        Occupied(e) => {
+                            // let key: &str = unsafe { std::mem::transmute(e.key().as_str()) };
+                            let info = e.into_mut();
+                            ensure_file_kind_fn(info.is_dir)?;
+                            // log::debug!("File `{}` inc refcnt = {}", key, info.ref_count + 1);
+                            info.ref_count += 1;
+                            info
+                        }
+                        Vacant(e) => unsafe {
+                            let archive = entry.handler.unwrap_unchecked().as_ref();
+                            let open_result = archive.open_file(back_path)?;
+                            ensure_file_kind_fn(open_result.is_dir)?;
+                            // log::debug!("Adding file `{}` to cache...", e.key().as_str());
+                            e.insert(ArchiveHandlerWithFilesChildFilesInfo {
+                                file: open_result.context,
+                                is_dir: open_result.is_dir,
+                                ref_count: 1,
+                            })
+                        },
+                    };
+                    let index = front_path.get_path().into();
                     Ok(super::CreateFileInfo {
                         context: unsafe {
                             Box::new(ArchiveFsFile::new_archive(
                                 index,
                                 &self.open_archives,
-                                open_result.context,
+                                back_path.get_path().into(),
+                                file_info.file.as_ref(),
                             ))
                         },
-                        is_dir: open_result.is_dir,
+                        is_dir: file_info.is_dir,
                         new_file_created: false,
                     })
                 }
@@ -356,30 +533,80 @@ impl super::FileSystemHandler for ArchiveFsHandler {
                             })
                         });
 
-                    let archive =
-                        open_archive_from_file(raw_create_result.context, &non_unicode_compat_cfg)
-                            .map_err(|e| {
-                                log::warn!("Open archive {} failed: {e}", front_path.get_path());
-                                FileSystemError::FileCorruptError
-                            })?;
-                    let archive: Box<dyn ArchiveHandler> = unsafe { std::mem::transmute(archive) };
+                    let mut archive_with_files = unsafe {
+                        Box::new(ArchiveHandlerWithFiles::new(
+                            None,
+                            front_path.get_path().into(),
+                            front_path.get_path().into(),
+                            raw_create_result.context,
+                            raw_create_result.is_dir,
+                        ))
+                    };
+                    let root_file = unsafe {
+                        std::mem::transmute(
+                            archive_with_files
+                                .dep_files
+                                .get_mut()
+                                .unwrap()
+                                .first_key_value()
+                                .unwrap()
+                                .1
+                                .file
+                                .as_ref(),
+                        )
+                    };
+
+                    let open_context = ArchiveHandlerOpenContext {
+                        file: root_file,
+                        ctx: unsafe { std::mem::transmute(archive_with_files.as_ref()) },
+                        fs: &self.in_path,
+                    };
+                    let archive = open_archive_from_file(open_context, &non_unicode_compat_cfg)
+                        .map_err(|e| {
+                            log::warn!("Open archive `{}` failed: {e}", front_path.get_path());
+                            FileSystemError::FileCorruptError
+                        })?;
+                    let archive = unsafe {
+                        let archive: Box<dyn ArchiveHandler> = std::mem::transmute(archive);
+                        archive_with_files.handler =
+                            Some(NonNull::new_unchecked(Box::into_raw(archive)));
+                        &*archive_with_files.handler.unwrap_unchecked().as_ptr()
+                    };
 
                     let open_result = archive.open_file(back_path)?;
-                    // TODO: Check for non-dir / dir flags
+                    ensure_file_kind_fn(open_result.is_dir)?;
 
                     // SAFETY: File is behind Box (points to heap)
                     let open_result: ArchiveHandlerOpenFileInfo<'static> =
                         unsafe { std::mem::transmute(open_result) };
-                    let index = CaselessString::new(front_path.get_path().to_string());
-                    e.insert(ArchiveHandlerWithFiles {
-                        handler: archive,
-                        open_count: AtomicU64::new(1),
-                    });
+                    let open_result_context: *const dyn ArchiveFile = open_result.context.as_ref();
+                    let index = front_path.get_path().into();
+                    match archive_with_files
+                        .files
+                        .get_mut()
+                        .unwrap()
+                        .entry(back_path.get_path().into())
+                    {
+                        Occupied(_) => {
+                            panic!("unexpected file found in empty map");
+                        }
+                        Vacant(e) => {
+                            // log::debug!("Adding file `{}` to cache...", e.key().as_str());
+                            e.insert(ArchiveHandlerWithFilesChildFilesInfo {
+                                file: open_result.context,
+                                is_dir: open_result.is_dir,
+                                ref_count: 1,
+                            });
+                        }
+                    }
+                    // log::debug!("Adding archive `{}` to cache...", front_path.get_path());
+                    e.insert(unsafe { std::mem::transmute(archive_with_files) });
                     let context = unsafe {
                         Box::new(ArchiveFsFile::new_archive(
                             index,
                             &self.open_archives,
-                            open_result.context,
+                            back_path.get_path().into(),
+                            open_result_context,
                         ))
                     };
 
@@ -433,9 +660,10 @@ enum ArchiveFsFileContext<'a> {
     Raw(super::OwnedFile<'a>),
     Archive {
         index: CaselessString,
-        entries: &'a Mutex<BTreeMap<CaselessString, ArchiveHandlerWithFiles<'static>>>,
+        entries: &'a Mutex<BTreeMap<CaselessString, Box<ArchiveHandlerWithFiles<'static>>>>,
+        filename: CaselessString,
         // TODO: Correctly annotate lifetime of ArchiveFile
-        file: *mut dyn ArchiveFile,
+        file: *const dyn ArchiveFile,
     },
 }
 
@@ -454,20 +682,19 @@ impl<'a> ArchiveFsFile<'a> {
     }
     // WARN: Do NOT drop ArchiveHandlerWithFiles outside, this is fully covered by
     //       ArchiveFsFile
-    // WARN: Add counter right before calling this method!
-    unsafe fn new_archive<'b>(
+    // WARN: Insert into entries right before calling this method!
+    unsafe fn new_archive(
         index: CaselessString,
-        entries: &'a Mutex<BTreeMap<CaselessString, ArchiveHandlerWithFiles<'static>>>,
-        file: OwnedArchiveFile<'b>,
-    ) -> Self
-    where
-        'a: 'b,
-    {
+        entries: &'a Mutex<BTreeMap<CaselessString, Box<ArchiveHandlerWithFiles<'static>>>>,
+        filename: CaselessString,
+        file: *const dyn ArchiveFile,
+    ) -> Self {
         ArchiveFsFile {
             context: ArchiveFsFileContext::Archive {
                 index,
                 entries,
-                file: std::mem::transmute(Box::into_raw(file)),
+                filename,
+                file,
             },
         }
     }
@@ -480,19 +707,35 @@ impl Drop for ArchiveFsFile<'_> {
         if let ArchiveFsFileContext::Archive {
             index,
             entries,
+            filename,
             file,
         } = &mut self.context
         {
-            // Drop file first
-            let _ = unsafe { Box::from_raw(*file) };
-            // Then check if we need to remove entry
+            // Check if we need to remove entry
             let mut entries = entries.lock().unwrap();
             match entries.entry(index.clone()) {
-                Occupied(e) => {
-                    let entry = e.get();
-                    if entry.open_count.fetch_sub(1, Ordering::AcqRel) == 1 {
+                Occupied(mut e) => {
+                    let entry = e.get_mut();
+                    let files = entry.files.get_mut().unwrap();
+                    match files.entry(filename.clone()) {
+                        Occupied(mut e) => {
+                            let info = e.get_mut();
+                            // log::debug!("File `{}` dec refcnt = {}", filename.as_str(), info.ref_count - 1);
+                            info.ref_count -= 1;
+                            if info.ref_count == 0 {
+                                // Drop file
+                                // log::debug!("Removing file `{}` from cache...", filename.as_str());
+                                e.remove();
+                            }
+                        }
+                        Vacant(_) => {
+                            panic!("file missing in open files list");
+                        }
+                    }
+                    if files.is_empty() {
                         // The last file from the archive has been closed, remove the
                         // archive entry now
+                        // log::debug!("Removing archive `{}` from cache...", e.key().as_str());
                         e.remove();
                     }
                 }
@@ -506,11 +749,7 @@ impl super::File for ArchiveFsFile<'_> {
     fn read_at(&self, offset: u64, buffer: &mut [u8]) -> super::FileSystemResult<u64> {
         match &self.context {
             ArchiveFsFileContext::Raw(f) => f.read_at(offset, buffer),
-            ArchiveFsFileContext::Archive {
-                index: _,
-                entries: _,
-                file,
-            } => {
+            ArchiveFsFileContext::Archive { file, .. } => {
                 let file = unsafe { &**file };
                 file.read_at(offset, buffer)
             }
@@ -530,11 +769,7 @@ impl super::File for ArchiveFsFile<'_> {
     fn get_stat(&self) -> super::FileSystemResult<super::FileStatInfo> {
         match &self.context {
             ArchiveFsFileContext::Raw(f) => f.get_stat(),
-            ArchiveFsFileContext::Archive {
-                index: _,
-                entries: _,
-                file,
-            } => {
+            ArchiveFsFileContext::Archive { file, .. } => {
                 let file = unsafe { &**file };
                 file.get_stat()
             }
@@ -577,24 +812,20 @@ impl super::File for ArchiveFsFile<'_> {
                         name: &str,
                         stat: &super::FileStatInfo,
                     ) -> Result<(), ()> {
-                        if is_name_archive(name) {
-                            let mut stat = *stat;
-                            stat.is_dir = true;
-                            stat.attributes |= FileAttributes::DirectoryFile;
-                            stat.size = 0;
-                            self.filler.fill_data(name, &stat)
-                        } else {
-                            self.filler.fill_data(name, stat)
+                        if stat.is_dir || !is_name_archive(name) {
+                            return self.filler.fill_data(name, stat);
                         }
+                        // We need to transform files into folders here
+                        let mut stat = *stat;
+                        stat.is_dir = true;
+                        stat.attributes |= FileAttributes::DirectoryFile;
+                        stat.size = 0;
+                        self.filler.fill_data(name, &stat)
                     }
                 }
                 f.find_files_with_pattern(pattern, &mut ArchiveFsFiller { filler })
             }
-            ArchiveFsFileContext::Archive {
-                index: _,
-                entries: _,
-                file,
-            } => {
+            ArchiveFsFileContext::Archive { file, .. } => {
                 let file = unsafe { &**file };
                 file.find_files_with_pattern(pattern, filler)
             }
@@ -602,10 +833,30 @@ impl super::File for ArchiveFsFile<'_> {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
+enum ArchiveHandlerKind {
+    Zip,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct ArchiveOpenRuleConfig {
+    // TODO: Describe haystack format
+    // WARN: Should only be used to check against file suffix;
+    //       won't be applied if path is already a folder
+    #[serde(with = "serde_regex")]
+    path_pattern: Regex,
+    handler_kind: ArchiveHandlerKind,
+    handles_file: bool,
+    handles_folder: bool,
+}
+
 #[derive(Serialize, Deserialize)]
 struct ArchiveFsConfig {
     /// The input path (can be an archive file or a folder containing archive files).
     input_path: FsWithPathConfig,
+    /// Rules to filter files to be treated as archives.
+    archive_rules: Vec<ArchiveOpenRuleConfig>,
     /// Non-Unicode compatibility configurations for archives.
     non_unicode_compat: ArchiveGlobalNonUnicodeCompatConfig,
 }
@@ -619,15 +870,6 @@ impl ArchiveFsHandler {
             in_path,
             open_archives: Mutex::new(BTreeMap::new()),
             non_unicode_compat_cfg,
-        }
-    }
-}
-
-fn make_uniform_path(path: &mut str) {
-    // SAFETY: The result string is still valid UTF-8
-    for b in unsafe { path.as_bytes_mut() } {
-        if *b == '/' as u8 {
-            *b = '\\' as u8;
         }
     }
 }
@@ -651,7 +893,7 @@ impl super::FsProvider for ArchiveFsProvider {
         let mut config: ArchiveFsConfig = serde_json::from_value(config)
             .map_err(|e| super::FileSystemCreationError::Other(e.into()))?;
         // Translate slashes
-        make_uniform_path(&mut config.input_path.path);
+        super::make_uniform_path(&mut config.input_path.path);
         let in_path = FsWithPath {
             handler: ctx.get_or_run_fs(&config.input_path.id, "")?,
             path: config.input_path.path,
@@ -664,6 +906,12 @@ impl super::FsProvider for ArchiveFsProvider {
     fn get_template_config(&self) -> serde_json::Value {
         serde_json::to_value(ArchiveFsConfig {
             input_path: Default::default(),
+            archive_rules: vec![ArchiveOpenRuleConfig {
+                path_pattern: Regex::new(r"\.zip$").unwrap(),
+                handler_kind: ArchiveHandlerKind::Zip,
+                handles_file: true,
+                handles_folder: false,
+            }],
             non_unicode_compat: Default::default(),
         })
         .unwrap()
