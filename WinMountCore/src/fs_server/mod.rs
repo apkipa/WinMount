@@ -18,6 +18,12 @@ pub trait FsServerProvider: Send {
         config: serde_json::Value,
     ) -> anyhow::Result<Arc<dyn FileSystemServer>>;
     fn get_template_config(&self) -> serde_json::Value;
+    /// Provides extra data (e.g. possible config field choices) to caller.
+    /// Note that no format restrictions are imposed on the return value,
+    /// and different values may be returned for multiple calls.
+    fn get_extra_data(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
 }
 
 pub fn init_fs_server_providers(

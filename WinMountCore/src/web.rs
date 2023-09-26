@@ -553,6 +553,26 @@ async fn handle_websocket_request(
             let fsrvp_list = app_ctx.list_fsrvp()?;
             serde_json::json!({ "fsrvp_list": fsrvp_list })
         }
+        "get-fsp-info" => {
+            #[derive(Deserialize)]
+            struct Params {
+                id: Uuid,
+            }
+            let params: Params = serde_json::from_value(params)?;
+            let mut app_ctx = app_ctx.lock().unwrap();
+            let info = app_ctx.get_fsp_info(params.id)?;
+            serde_json::json!(info)
+        }
+        "get-fsrvp-info" => {
+            #[derive(Deserialize)]
+            struct Params {
+                id: Uuid,
+            }
+            let params: Params = serde_json::from_value(params)?;
+            let mut app_ctx = app_ctx.lock().unwrap();
+            let info = app_ctx.get_fsrvp_info(params.id)?;
+            serde_json::json!(info)
+        }
         "get-fs-info" => {
             #[derive(Deserialize)]
             struct Params {

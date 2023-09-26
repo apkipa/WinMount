@@ -171,20 +171,17 @@ pub(super) async fn handle_client_cli(
             }
         }
         AppCommands::ListFsp { id: Some(id) } => {
-            #[derive(Deserialize)]
-            struct Response {
-                fsp_list: Vec<crate::ListFileSystemProviderItemData>,
-            }
-            let params = serde_json::Value::Null;
-            let resp = ws_send_request(&mut ws, "list-fsp", params).await?;
-            let resp: Response = serde_json::from_value(resp)?;
-            let info = resp
-                .fsp_list
-                .into_iter()
-                .filter(|v| v.id == *id)
-                .next()
-                .context("filesystem provider not found")?;
-            println!("Name: {}", info.name);
+            let params = serde_json::json!({ "id": id });
+            let resp = ws_send_request(&mut ws, "get-fsp-info", params).await?;
+            let resp: crate::GetFileSystemProviderInfoData = serde_json::from_value(resp)?;
+            println!("Name: {}", resp.name);
+            println!(
+                "Version: {}.{}.{}",
+                resp.version.0, resp.version.1, resp.version.2
+            );
+            println!("Template config: {}", resp.template_config);
+            println!("Extra data: {}", resp.extra_data);
+            println!("Is hidden: {}", resp.is_hidden);
         }
         AppCommands::ListFsp { id: None } => {
             #[derive(Deserialize)]
@@ -226,20 +223,16 @@ pub(super) async fn handle_client_cli(
             }
         }
         AppCommands::ListFsrvp { id: Some(id) } => {
-            #[derive(Deserialize)]
-            struct Response {
-                fsrvp_list: Vec<crate::ListFServerProviderItemData>,
-            }
-            let params = serde_json::Value::Null;
-            let resp = ws_send_request(&mut ws, "list-fsrvp", params).await?;
-            let resp: Response = serde_json::from_value(resp)?;
-            let info = resp
-                .fsrvp_list
-                .into_iter()
-                .filter(|v| v.id == *id)
-                .next()
-                .context("filesystem server provider not found")?;
-            println!("Name: {}", info.name);
+            let params = serde_json::json!({ "id": id });
+            let resp = ws_send_request(&mut ws, "get-fsrvp-info", params).await?;
+            let resp: crate::GetFServerProviderInfoData = serde_json::from_value(resp)?;
+            println!("Name: {}", resp.name);
+            println!(
+                "Version: {}.{}.{}",
+                resp.version.0, resp.version.1, resp.version.2
+            );
+            println!("Template config: {}", resp.template_config);
+            println!("Extra data: {}", resp.extra_data);
         }
         AppCommands::ListFsrvp { id: None } => {
             #[derive(Deserialize)]

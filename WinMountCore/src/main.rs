@@ -157,6 +157,21 @@ struct ListFServerProviderItemData {
     template_config: serde_json::Value,
 }
 #[derive(Serialize, Deserialize)]
+struct GetFileSystemProviderInfoData {
+    name: String,
+    version: (u32, u32, u32),
+    template_config: serde_json::Value,
+    extra_data: serde_json::Value,
+    is_hidden: bool,
+}
+#[derive(Serialize, Deserialize)]
+struct GetFServerProviderInfoData {
+    name: String,
+    version: (u32, u32, u32),
+    template_config: serde_json::Value,
+    extra_data: serde_json::Value,
+}
+#[derive(Serialize, Deserialize)]
 struct GetFileSystemInfoData {
     name: String,
     kind_id: Uuid,
@@ -380,6 +395,31 @@ impl AppContext {
                 template_config: fsrvp.get_template_config(),
             })
             .collect())
+    }
+    fn get_fsp_info(&mut self, id: Uuid) -> anyhow::Result<GetFileSystemProviderInfoData> {
+        let fsp_info = self
+            .fs_providers
+            .get(&id)
+            .context("filesystem provider not found")?;
+        Ok(GetFileSystemProviderInfoData {
+            name: fsp_info.provider.get_name().to_owned(),
+            version: fsp_info.provider.get_version(),
+            template_config: fsp_info.provider.get_template_config(),
+            extra_data: fsp_info.provider.get_extra_data(),
+            is_hidden: fsp_info.is_hidden,
+        })
+    }
+    fn get_fsrvp_info(&mut self, id: Uuid) -> anyhow::Result<GetFServerProviderInfoData> {
+        let fsrvp = self
+            .fs_server_providers
+            .get(&id)
+            .context("filesystem server provider not found")?;
+        Ok(GetFServerProviderInfoData {
+            name: fsrvp.get_name().to_owned(),
+            version: fsrvp.get_version(),
+            template_config: fsrvp.get_template_config(),
+            extra_data: fsrvp.get_extra_data(),
+        })
     }
     fn get_fs_info(&mut self, id: Uuid) -> anyhow::Result<GetFileSystemInfoData> {
         let fs_info = self.filesystems.get(&id).context("filesystem not found")?;
