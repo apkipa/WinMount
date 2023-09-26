@@ -45,6 +45,8 @@ fn fs_error_to_ntstatus(err: FileSystemError) -> NTSTATUS {
         FileSystemError::CannotDelete => STATUS_CANNOT_DELETE,
         FileSystemError::InvalidParameter => STATUS_INVALID_PARAMETER,
         FileSystemError::FileCorruptError => STATUS_FILE_CORRUPT_ERROR,
+        FileSystemError::EndOfFile => STATUS_END_OF_FILE,
+        FileSystemError::SharingViolation => STATUS_SHARING_VIOLATION,
         FileSystemError::Other(e) => {
             log::warn!("Unknown FileSystemError: {e}");
             STATUS_INTERNAL_ERROR

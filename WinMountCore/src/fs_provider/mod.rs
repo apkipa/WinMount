@@ -43,6 +43,8 @@ pub enum FileSystemError {
     FileCorruptError,
     #[error("the end-of-file marker has been reached")]
     EndOfFile,
+    #[error("a file cannot be opened because the share access flags are incompatible")]
+    SharingViolation,
 }
 
 impl From<FileSystemError> for std::io::Error {
