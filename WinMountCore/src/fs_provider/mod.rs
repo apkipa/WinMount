@@ -1,7 +1,8 @@
 mod adbfs;
 mod archivefs;
+mod cryptofs;
 pub mod local;
-pub mod memfs;
+mod memfs;
 mod overlayfs;
 
 use std::{sync::Arc, time::SystemTime};

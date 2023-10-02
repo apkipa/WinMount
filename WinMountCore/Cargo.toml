@@ -54,3 +54,15 @@ flate2 = "1.0.27"
 libdeflater = "0.14.0"
 bitstream-io = "1.7.0"
 chrono = "0.4.30"
+binrw = "0.12.0"
+lz4_flex = "0.11.1"
+modular-bitfield = "0.11.2"
+nom = "7.1.3"
+num-derive = "0.4.0"
+num-traits = "0.2.16"
+strum = "0.25.0"
+strum_macros = "0.25.2"
+
+[features]
+default = ["enable-nonfree"]
+enable-nonfree = []

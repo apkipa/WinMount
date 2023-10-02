@@ -557,8 +557,6 @@ impl<'a> ZipArchive<'a> {
                         break;
                     }
 
-                    counter += 1;
-
                     let key = CaselessString::new(path.to_owned());
                     cur_dir_children = match cur_dir_children.entry(key) {
                         Occupied(e) => match e.into_mut() {
@@ -573,12 +571,15 @@ impl<'a> ZipArchive<'a> {
                             // TODO: Change to correct time
                             dos_modify_time: SystemTime::UNIX_EPOCH,
                         })) {
-                            ZipEntry::Folder(e) => &mut e.children,
+                            ZipEntry::Folder(e) => {
+                                counter += 1;
+                                &mut e.children
+                            }
                             _ => unreachable!(),
                         },
                     };
                 }
-                if filename == "" {
+                if filename.is_empty() {
                     // Bad file name
                     continue;
                 }
@@ -797,7 +798,7 @@ impl super::ArchiveFile for ZipFile<'_> {
             BorrowedZipEntry::File(e) => e,
             BorrowedZipEntry::Folder(_) => return Err(FileSystemError::FileIsADirectory),
         };
-        let file = &self.root.file;
+        let file = self.root.file;
         match &self.reader {
             // We already handled the directory case, so return FileCorruptError here
             ZipFileReader::Null => Err(FileSystemError::FileCorruptError),

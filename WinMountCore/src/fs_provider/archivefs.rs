@@ -1,3 +1,5 @@
+#[cfg(feature = "enable-nonfree")]
+mod unity;
 mod zip;
 
 use std::{
@@ -5,10 +7,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     convert::Infallible,
     ptr::NonNull,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
 };
 
 use regex::Regex;
@@ -60,6 +59,7 @@ struct ArchiveHandlerWithFilesChildFilesInfo {
 }
 
 unsafe impl Send for ArchiveHandlerWithFiles<'_> {}
+unsafe impl Sync for ArchiveHandlerWithFiles<'_> {}
 
 struct ArchiveHandlerWithFiles<'a> {
     handler: Option<NonNull<dyn ArchiveHandler>>,
@@ -337,13 +337,14 @@ struct ArchiveHandlerOpenContextOpenInfo<'a> {
 struct ArchiveOpenDepFileGuard<'a> {
     file: &'a dyn super::File,
     path: CaselessString,
-    ctx: &'a ArchiveHandlerWithFiles<'a>,
+    // TODO: Correctly annonate lifetime
+    ctx: NonNull<ArchiveHandlerWithFiles<'static>>,
 }
 impl<'a> ArchiveOpenDepFileGuard<'a> {
     fn new(
         file: &'a dyn super::File,
         path: CaselessString,
-        ctx: &'a ArchiveHandlerWithFiles<'a>,
+        ctx: NonNull<ArchiveHandlerWithFiles<'static>>,
     ) -> Self {
         Self { file, path, ctx }
     }
@@ -354,10 +355,16 @@ impl<'a> std::ops::Deref for ArchiveOpenDepFileGuard<'a> {
         self.file
     }
 }
+impl<'a> AsRef<dyn super::File + 'a> for ArchiveOpenDepFileGuard<'a> {
+    fn as_ref(&self) -> &(dyn super::File + 'a) {
+        self.file
+    }
+}
 impl Drop for ArchiveOpenDepFileGuard<'_> {
     fn drop(&mut self) {
         use std::collections::btree_map::Entry::*;
-        let mut dep_files = self.ctx.dep_files.lock().unwrap();
+        let ctx = unsafe { self.ctx.as_ref() };
+        let mut dep_files = ctx.dep_files.lock().unwrap();
         match dep_files.entry(self.path.clone()) {
             Occupied(mut e) => {
                 let info = e.get_mut();
@@ -373,11 +380,16 @@ impl Drop for ArchiveOpenDepFileGuard<'_> {
     }
 }
 
+unsafe impl Send for ArchiveHandlerOpenContext<'_> {}
+unsafe impl Sync for ArchiveHandlerOpenContext<'_> {}
+
 #[derive(Clone, Copy)]
 struct ArchiveHandlerOpenContext<'a> {
     file: &'a dyn super::File,
     is_dir: bool,
-    ctx: &'a ArchiveHandlerWithFiles<'a>,
+    // TODO: Correctly annonate lifetime
+    // NOTE: Using a pointer allows 'a to be covariant
+    ctx: NonNull<ArchiveHandlerWithFiles<'static>>,
     fs: &'a FsWithPath,
 }
 impl<'a> ArchiveHandlerOpenContext<'a> {
@@ -387,10 +399,11 @@ impl<'a> ArchiveHandlerOpenContext<'a> {
         filename: super::SegPath,
     ) -> super::FileSystemResult<ArchiveHandlerOpenContextOpenInfo<'a>> {
         use std::collections::btree_map::Entry::*;
-        let filename = super::concat_path(self.ctx.base_path.as_str(), filename);
+        let ctx = unsafe { self.ctx.as_ref() };
+        let filename = super::concat_path(ctx.base_path.as_str(), filename);
         let filename = filename.as_non_owned();
         let filename_str: CaselessString = filename.get_path().into();
-        let mut dep_files = self.ctx.dep_files.lock().unwrap();
+        let mut dep_files = ctx.dep_files.lock().unwrap();
         let info = match dep_files.entry(filename_str.clone()) {
             Occupied(e) => {
                 let info = e.into_mut();
@@ -407,7 +420,7 @@ impl<'a> ArchiveHandlerOpenContext<'a> {
                     FileCreateOptions::empty(),
                 )?;
                 e.insert(ArchiveHandlerWithFilesDepFilesInfo {
-                    file: create_info.context,
+                    file: unsafe { std::mem::transmute(create_info.context) },
                     is_dir: create_info.is_dir,
                     ref_count: 1,
                 })
@@ -423,6 +436,10 @@ impl<'a> ArchiveHandlerOpenContext<'a> {
     pub fn get_file(&self) -> &'a dyn super::File {
         self.file
     }
+    pub fn get_file_name(&self) -> &'a str {
+        let ctx = unsafe { self.ctx.as_ref() };
+        ctx.path.as_str()
+    }
     pub fn get_is_dir(&self) -> bool {
         self.is_dir
     }
@@ -433,10 +450,14 @@ fn open_archive_from_file<'a>(
     archive_rule: &ArchiveOpenRuleConfig,
     non_unicode_compat: &ArchiveNonUnicodeCompatConfig,
 ) -> anyhow::Result<Box<dyn ArchiveHandler + 'a>> {
-    Ok(Box::new(match archive_rule.handler_kind {
-        ArchiveHandlerKind::Zip => zip::ZipArchive::new(open_ctx, non_unicode_compat)?,
+    Ok(match archive_rule.handler_kind {
+        ArchiveHandlerKind::Zip => Box::new(zip::ZipArchive::new(open_ctx, non_unicode_compat)?),
+        #[cfg(feature = "enable-nonfree")]
+        ArchiveHandlerKind::Unity => {
+            Box::new(unity::UnityArchive::new(open_ctx, non_unicode_compat)?)
+        }
         _ => anyhow::bail!("unsupported archive handler type"),
-    }))
+    })
 }
 
 impl super::FileSystemHandler for ArchiveFsHandler {
@@ -580,7 +601,7 @@ impl super::FileSystemHandler for ArchiveFsHandler {
                             None,
                             front_path.get_path().into(),
                             front_path.get_path().into(),
-                            raw_create_result.context,
+                            unsafe { std::mem::transmute(raw_create_result.context) },
                             raw_create_result.is_dir,
                         ))
                     };
@@ -601,7 +622,7 @@ impl super::FileSystemHandler for ArchiveFsHandler {
                     let open_context = ArchiveHandlerOpenContext {
                         file: root_file,
                         is_dir: raw_create_result.is_dir,
-                        ctx: unsafe { std::mem::transmute(archive_with_files.as_ref()) },
+                        ctx: unsafe { NonNull::new_unchecked(archive_with_files.as_mut()) },
                         fs: &self.in_path,
                     };
                     let archive =
@@ -878,10 +899,12 @@ impl super::File for ArchiveFsFile<'_, '_> {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, strum_macros::EnumIter)]
 #[serde(rename_all = "snake_case")]
 enum ArchiveHandlerKind {
     Zip,
+    #[cfg(feature = "enable-nonfree")]
+    Unity,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -963,6 +986,12 @@ impl super::FsProvider for ArchiveFsProvider {
             non_unicode_compat: Default::default(),
         })
         .unwrap()
+    }
+    fn get_extra_data(&self) -> serde_json::Value {
+        use strum::IntoEnumIterator;
+        serde_json::json!({
+            "available_archive_handlers": ArchiveHandlerKind::iter().collect::<Vec<_>>(),
+        })
     }
 }
 

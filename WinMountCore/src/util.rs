@@ -23,6 +23,86 @@ pub const fn parse_u32(s: &str) -> u32 {
     val
 }
 
+pub trait SeekExt {
+    // WARN: align must be power of 2 and not be zero
+    fn align_seek(&mut self, align: u64) -> std::io::Result<u64>;
+}
+impl<T: std::io::Seek> SeekExt for T {
+    fn align_seek(&mut self, align: u64) -> std::io::Result<u64> {
+        let pos = self.stream_position()?;
+        let diff = pos % align;
+        if diff != 0 {
+            self.seek(std::io::SeekFrom::Start(pos - diff + align))
+        } else {
+            Ok(pos)
+        }
+    }
+}
+
+/// This is the same as read_exact, except if it reaches EOF it doesn't return
+/// an error, and it returns the number of bytes read.
+pub fn read_up_to(file: &mut impl std::io::Read, mut buf: &mut [u8]) -> std::io::Result<usize> {
+    let buf_len = buf.len();
+
+    while !buf.is_empty() {
+        match file.read(buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                let tmp = buf;
+                buf = &mut tmp[n..];
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(buf_len - buf.len())
+}
+
+/// # Safety
+///
+/// Caller must guarantee that the Read implementation never reads from unwritten (i.e. uninitialized)
+/// buffer.
+pub unsafe fn read_exact_to_vec(
+    file: &mut impl std::io::Read,
+    len: usize,
+) -> std::io::Result<Vec<u8>> {
+    let mut data = Vec::with_capacity(len);
+    file.read_exact(core::slice::from_raw_parts_mut(data.as_mut_ptr(), len))?;
+    data.set_len(len);
+    Ok(data)
+}
+
+// Source: https://github.com/jam1garner/binrw/blob/master/binrw/src/strings.rs#L258
+pub fn display_utf8<'a, Transformer: Fn(&'a str) -> O, O: Iterator<Item = char> + 'a>(
+    mut input: &'a [u8],
+    f: &mut std::fmt::Formatter<'_>,
+    t: Transformer,
+) -> std::fmt::Result {
+    // Adapted from <https://doc.rust-lang.org/std/str/struct.Utf8Error.html>
+    use std::fmt::Write;
+    loop {
+        match core::str::from_utf8(input) {
+            Ok(valid) => {
+                t(valid).try_for_each(|c| f.write_char(c))?;
+                break;
+            }
+            Err(error) => {
+                let (valid, after_valid) = input.split_at(error.valid_up_to());
+
+                t(core::str::from_utf8(valid).unwrap()).try_for_each(|c| f.write_char(c))?;
+                f.write_char(char::REPLACEMENT_CHARACTER)?;
+
+                if let Some(invalid_sequence_length) = error.error_len() {
+                    input = &after_valid[invalid_sequence_length..];
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// An ASCII-caseless string slice type.
 pub struct CaselessStr(str);
 impl PartialEq for CaselessStr {
