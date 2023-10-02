@@ -434,7 +434,7 @@ pub enum UnityBuildTarget {
     UnknownPlatform = 9999,
 }
 
-#[derive(num_derive::FromPrimitive, strum_macros::Display)]
+#[derive(num_derive::FromPrimitive, strum_macros::Display, PartialEq, Eq)]
 pub enum UnityTextureFormat {
     Alpha8 = 1,
     ARGB4444,

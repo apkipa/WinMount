@@ -2,10 +2,12 @@ use std::{
     borrow::Cow,
     collections::{BTreeMap, HashMap},
     io::{Cursor, Read, Seek},
-    sync::Mutex,
+    mem::ManuallyDrop,
+    sync::{Mutex, RwLock},
     time::SystemTime,
 };
 
+use anyhow::Context;
 use binrw::BinRead;
 
 use crate::{
@@ -96,7 +98,7 @@ fn guess_file_type(file: &mut (impl Read + Seek)) -> binrw::BinResult<UnityFileT
 struct UnityFilePtr {
     base_name: CaselessString,
     // Non-empty if resides in an AB
-    inner_name: CaselessString,
+    inner_offset: Option<SimpleFilePtr>,
     offset: u64,
     size: u64,
 }
@@ -105,18 +107,6 @@ struct UnityFilePtr {
 struct SimpleFilePtr {
     offset: u64,
     size: u64,
-}
-
-// TODO: Remove definition of UnitySingleArchive & UnityAggregateArchive
-// Can refer to either *.bundle or *.assets
-struct UnitySingleArchive {
-    path: String,
-    // Is the file an AssetBundle?
-    is_ab: bool,
-}
-// Refers to a group of UnitySingleArchive's
-struct UnityAggregateArchive {
-    // TODO...
 }
 
 struct UnityFolderEntry {
@@ -377,6 +367,13 @@ impl<'a, T: AsRef<dyn ReadAt + 'a>> CursorUnityBlocksReader<T> {
         self.scope = scope;
         self
     }
+    fn clone_ref(&self) -> CursorUnityBlocksReader<&T> {
+        CursorUnityBlocksReader {
+            reader: &self.reader,
+            position: self.position,
+            scope: self.scope,
+        }
+    }
 }
 impl<'a, T: AsRef<dyn ReadAt + 'a>> std::io::Read for CursorUnityBlocksReader<T> {
     fn read(&mut self, mut buf: &mut [u8]) -> std::io::Result<usize> {
@@ -412,6 +409,44 @@ impl<'a, T: AsRef<dyn ReadAt + 'a>> std::io::Seek for CursorUnityBlocksReader<T>
     }
 }
 
+fn read_ab_header(
+    reader: &mut (impl Read + Seek),
+) -> anyhow::Result<(
+    types::UnityFSAssetBundle,
+    types::UnityFSBlocksAndDirsInfo,
+    types::UnityEngineVersion,
+)> {
+    let ab = types::UnityFSAssetBundle::read(reader)?;
+    let engine_ver = String::from_utf8_lossy(&ab.file_engine_ver);
+    let engine_ver = types::UnityEngineVersion::try_from(engine_ver.as_ref())?;
+
+    if !ab.flags.has_dir_info() {
+        anyhow::bail!("AB did not set flag has_dir_info, which is unsupported");
+    }
+    if ab.flags.block_and_dir_info_at_eof() {
+        anyhow::bail!("AB has unsupported flag block_and_dir_info_at_eof set");
+    }
+    if ab.file_ver >= 7 {
+        reader.align_seek(16)?;
+    }
+
+    // Read compressed blocks info
+    let compression_type = ab
+        .flags
+        .compression_type_or_err()
+        .map_err(|e| anyhow::anyhow!("got invalid compression type: {e:?}"))?;
+    let blocks_data = unsafe { crate::util::read_exact_to_vec(reader, ab.compressed_size as _)? };
+    let blocks_data = decompress_data(compression_type, blocks_data, ab.uncompressed_size as _)?;
+    let mut blocks_data_reader = Cursor::new(&blocks_data);
+    let blocks_and_dirs_info = types::UnityFSBlocksAndDirsInfo::read(&mut blocks_data_reader)?;
+
+    if ab.flags.has_padding_before_blocks() {
+        reader.align_seek(16)?;
+    }
+
+    Ok((ab, blocks_and_dirs_info, engine_ver))
+}
+
 impl<'a> UnityArchive<'a> {
     pub(super) fn new(
         open_ctx: ArchiveHandlerOpenContext<'a>,
@@ -426,6 +461,7 @@ impl<'a> UnityArchive<'a> {
             root_index: u64,
             // container: &types::UnityAlignedString,
             container: &Cow<'_, str>,
+            dir_finder: impl FnOnce(&str) -> SimpleFilePtr,
             obj_info: &types::UnityFSSerializedObjectInfo,
             obj: types::UnityFSSerializedObject,
             asset_base_name: CaselessString,
@@ -471,16 +507,22 @@ impl<'a> UnityArchive<'a> {
                 anyhow::bail!("file name is empty");
             }
             let key = CaselessString::new(filename.to_owned());
-            let extract_name_from_path_fn = |s| {
-                String::from_utf8_lossy(s)
-                    .rsplit_once('/')
-                    .map(|x| x.1.to_owned())
-                    .unwrap_or_default()
+            let extract_name_from_path_fn = |s| match String::from_utf8_lossy(s) {
+                Cow::Borrowed(s) => {
+                    Cow::Borrowed(s.rsplit_once('/').map(|x| x.1).unwrap_or_default())
+                }
+                Cow::Owned(s) => Cow::Owned(
+                    s.rsplit_once('/')
+                        .map(|x| x.1.to_owned())
+                        .unwrap_or_default(),
+                ),
             };
             let file_ptr = match &obj {
                 Texture2D(info) => UnityFilePtr {
                     base_name: asset_base_name,
-                    inner_name: extract_name_from_path_fn(&info.stream_data.path.0).into(),
+                    inner_offset: Some(dir_finder(
+                        extract_name_from_path_fn(&info.stream_data.path.0).as_ref(),
+                    )),
                     offset: info.stream_data.offset,
                     size: info.stream_data.size as _,
                 },
@@ -525,42 +567,8 @@ impl<'a> UnityArchive<'a> {
             }
             // TODO: Handle orphan objects (i.e. has no containers)
 
-            let ab = types::UnityFSAssetBundle::read(&mut cursor_file)?;
-            let engine_ver = String::from_utf8_lossy(&ab.file_engine_ver);
-            // log::debug!(
-            //     "Opening UnityFS with version {}, engine `{}`...",
-            //     ab.file_ver,
-            //     engine_ver
-            // );
-            let engine_ver = types::UnityEngineVersion::try_from(engine_ver.as_ref())?;
-
-            if !ab.flags.has_dir_info() {
-                anyhow::bail!("AB did not set flag has_dir_info, which is unsupported");
-            }
-            if ab.flags.block_and_dir_info_at_eof() {
-                anyhow::bail!("AB has unsupported flag block_and_dir_info_at_eof set");
-            }
-            if ab.file_ver >= 7 {
-                cursor_file.align_seek(16)?;
-            }
-
-            // Read compressed blocks info
-            let compression_type = ab
-                .flags
-                .compression_type_or_err()
-                .map_err(|e| anyhow::anyhow!("got invalid compression type: {e:?}"))?;
-            let blocks_data = unsafe {
-                crate::util::read_exact_to_vec(&mut cursor_file, ab.compressed_size as _)?
-            };
-            let blocks_data =
-                decompress_data(compression_type, blocks_data, ab.uncompressed_size as _)?;
-            let mut blocks_data_reader = Cursor::new(&blocks_data);
-            let blocks_and_dirs_info =
-                types::UnityFSBlocksAndDirsInfo::read(&mut blocks_data_reader)?;
-
-            if ab.flags.has_padding_before_blocks() {
-                cursor_file.align_seek(16)?;
-            }
+            // Read AB headers (header + blocks info)
+            let (ab, blocks_and_dirs_info, engine_ver) = read_ab_header(&mut cursor_file)?;
 
             // Read assets list
             let blocks_reader = UnityBlocksReader::new(
@@ -579,11 +587,13 @@ impl<'a> UnityArchive<'a> {
             }
 
             let mut assets_file = None;
+            let mut assets_file_ptr = SimpleFilePtr { offset: 0, size: 0 };
             for (k, &v) in dirs_map.iter() {
                 let mut file_reader = CursorUnityBlocksReader::with_scope(&blocks_reader, v);
                 let file_type = guess_file_type(&mut file_reader)?;
                 if let UnityFileType::AssetsFile = file_type {
                     assets_file = Some(file_reader);
+                    assets_file_ptr = v;
                     break;
                 }
             }
@@ -654,7 +664,15 @@ impl<'a> UnityArchive<'a> {
                         continue;
                     }
                 };
-                add_file_to_root_dir(root_dir, root_index, obj_container, obj_info, obj, filename.into())?;
+                add_file_to_root_dir(
+                    root_dir,
+                    root_index,
+                    obj_container,
+                    |k| *dirs_map.get(k).unwrap_or(&assets_file_ptr),
+                    obj_info,
+                    obj,
+                    filename.into(),
+                )?;
             }
 
             Ok(())
@@ -739,25 +757,62 @@ impl super::ArchiveHandler for UnityArchive<'_> {
         };
 
         Ok(super::ArchiveHandlerOpenFileInfo {
-            context: Box::new(UnityFile {
-                root_archive: self,
-                entry,
-            }),
+            context: match entry {
+                BorrowedUnityEntry::Folder(e) => Box::new(UnityFolderFile { entry: e }),
+                BorrowedUnityEntry::File(e) => {
+                    let filename = SegPath::new_truncate(
+                        e.file_ptr.base_name.as_str(),
+                        PathDelimiter::BackSlash,
+                    );
+                    let open_result = self.open_ctx.open_file(filename)?;
+                    if open_result.is_dir {
+                        return Err(FileSystemError::FileCorruptError);
+                    }
+                    let fs_file = open_result.context;
+                    let mut cursor_file = CursorFile::new(&*fs_file);
+                    let mut cursor_file = binrw::io::BufReader::new(cursor_file);
+                    let (ab, blocks_and_dirs_info, engine_ver) = read_ab_header(&mut cursor_file)?;
+                    // TODO: SAFETY statement
+                    let reader = unsafe {
+                        std::mem::transmute(UnityBlocksReader::new(
+                            fs_file.as_ref(),
+                            cursor_file
+                                .stream_position()
+                                .map_err(|_| FileSystemError::FileCorruptError)?,
+                            &blocks_and_dirs_info.blocks_info,
+                        ))
+                    };
+                    let reader = CursorUnityBlocksReader::with_scope(
+                        reader,
+                        e.file_ptr.inner_offset.unwrap(),
+                    );
+                    let reader = reader.into_scoped(SimpleFilePtr {
+                        offset: e.file_ptr.offset,
+                        size: e.file_ptr.size,
+                    });
+                    Box::new(UnityFileFile {
+                        root_archive: self,
+                        entry: e,
+                        reader,
+                        blocks_info: blocks_and_dirs_info.blocks_info,
+                        cache: RwLock::new(None),
+                    })
+                }
+            },
             is_dir: entry.is_dir(),
         })
     }
 }
 
-struct UnityFile<'a> {
-    root_archive: &'a UnityArchive<'a>,
-    entry: BorrowedUnityEntry<'a>,
+struct UnityFolderFile<'a> {
+    entry: &'a UnityFolderEntry,
 }
 
-impl super::ArchiveFile for UnityFile<'_> {
-    fn read_at(&self, offset: u64, buffer: &mut [u8]) -> FileSystemResult<u64> {
-        Err(FileSystemError::NotImplemented)
+impl super::ArchiveFile for UnityFolderFile<'_> {
+    fn read_at(&self, _offset: u64, _buffer: &mut [u8]) -> FileSystemResult<u64> {
+        Err(FileSystemError::FileIsADirectory)
     }
-    fn get_stat(&self) -> crate::fs_provider::FileSystemResult<FileStatInfo> {
+    fn get_stat(&self) -> FileSystemResult<FileStatInfo> {
         Ok(self.entry.get_file_stat_info())
     }
     fn find_files_with_pattern(
@@ -765,22 +820,153 @@ impl super::ArchiveFile for UnityFile<'_> {
         pattern: &dyn crate::fs_provider::FilePattern,
         filler: &mut dyn crate::fs_provider::FindFilesDataFiller,
     ) -> FileSystemResult<()> {
-        let entry = match self.entry {
-            BorrowedUnityEntry::Folder(e) => e,
-            BorrowedUnityEntry::File(_) => return Err(FileSystemError::NotADirectory),
-        };
-        for (name, child) in entry
+        for (name, child) in self
+            .entry
             .children
             .iter()
             .filter(|(name, _)| pattern.check_name(name.as_str()))
         {
-            if filler
-                .fill_data(name.as_str(), &child.get_file_stat_info())
-                .is_err()
-            {
+            let mut stat = child.get_file_stat_info();
+            if let UnityEntry::File(e) = child {
+                stat.size = get_obj_file_size(&e.obj);
+            }
+            if filler.fill_data(name.as_str(), &stat).is_err() {
                 log::warn!("Failed to fill object data");
             }
         }
         Ok(())
+    }
+}
+
+struct UnityFileFile<'a> {
+    root_archive: &'a UnityArchive<'a>,
+    entry: &'a UnityFileEntry,
+    // TODO: Correctly annonate lifetime
+    // NOTE: reader must be dropped before blocks_info
+    reader: CursorUnityBlocksReader<UnityBlocksReader<'a, 'static, dyn crate::fs_provider::File>>,
+    blocks_info: Vec<types::UnityFSBlockInfo>,
+    cache: RwLock<Option<Vec<u8>>>,
+}
+
+const BMP_HDR_SIZE: u64 = 14;
+const BITMAPV4HEADER_SIZE: u64 = 108;
+
+fn get_obj_file_size(obj: &types::UnityFSSerializedObject) -> u64 {
+    use types::UnityFSSerializedObject::*;
+    match obj {
+        Texture2D(obj) => {
+            // TODO: Generate uncompressed png instead, as not all apps
+            //       can handle alpha BMPs very well
+            let pixels_size = 4 * obj.width as u64 * obj.height as u64;
+            BMP_HDR_SIZE + BITMAPV4HEADER_SIZE + pixels_size
+        }
+        _ => 0,
+    }
+}
+
+impl super::ArchiveFile for UnityFileFile<'_> {
+    fn read_at(&self, offset: u64, buffer: &mut [u8]) -> FileSystemResult<u64> {
+        use binrw::BinWrite;
+        use num_traits::FromPrimitive;
+        use types::UnityFSSerializedObject::*;
+        use types::UnityTextureFormat;
+
+        let cache = loop {
+            let guard = self.cache.read().unwrap();
+            if guard.is_some() {
+                break guard;
+            }
+            drop(guard);
+            match *self.cache.write().unwrap() {
+                ref mut data @ None => {
+                    *data = Some(match &self.entry.obj {
+                        Texture2D(obj) => || -> anyhow::Result<_> {
+                            let mut reader = self.reader.clone_ref();
+                            let texture_format =
+                                <UnityTextureFormat as FromPrimitive>::from_u32(obj.texture_format)
+                                    .context("invalid texture format")?;
+                            if texture_format != UnityTextureFormat::RGBA32 {
+                                anyhow::bail!("unsupported texture format {texture_format}");
+                            }
+                            let pixels_size = 4 * obj.width as u64 * obj.height as u64;
+                            let mut data = Vec::new();
+                            let mut data_noseek = binrw::io::NoSeek::new(&mut data);
+                            // BMP header
+                            b"BM".write_le(&mut data_noseek)?;
+                            (get_obj_file_size(&self.entry.obj) as u32)
+                                .write_le(&mut data_noseek)?;
+                            0u16.write_le(&mut data_noseek)?;
+                            0u16.write_le(&mut data_noseek)?;
+                            ((BMP_HDR_SIZE + BITMAPV4HEADER_SIZE) as u32)
+                                .write_le(&mut data_noseek)?;
+                            // DIB header
+                            (BITMAPV4HEADER_SIZE as u32).write_le(&mut data_noseek)?;
+                            (obj.width as u32).write_le(&mut data_noseek)?;
+                            (obj.height as u32).write_le(&mut data_noseek)?;
+                            1u16.write_le(&mut data_noseek)?;
+                            32u16.write_le(&mut data_noseek)?;
+                            3u32.write_le(&mut data_noseek)?;
+                            (pixels_size as u32).write_le(&mut data_noseek)?;
+                            0u32.write_le(&mut data_noseek)?;
+                            0u32.write_le(&mut data_noseek)?;
+                            0u32.write_le(&mut data_noseek)?;
+                            0u32.write_le(&mut data_noseek)?;
+                            // ARGB masks
+                            //  R
+                            0xff0000u32.write_le(&mut data_noseek)?;
+                            //  G
+                            0xff00u32.write_le(&mut data_noseek)?;
+                            //  B
+                            0xffu32.write_le(&mut data_noseek)?;
+                            //  A
+                            0xff000000u32.write_le(&mut data_noseek)?;
+                            // Colorspace
+                            0x73524742.write_le(&mut data_noseek)?;
+                            [0u32; 12].write_le(&mut data_noseek)?;
+                            let headers_len = data.len();
+                            data.reserve(pixels_size as _);
+                            unsafe {
+                                reader.read_exact(core::slice::from_raw_parts_mut(
+                                    data.as_mut_ptr().add(headers_len),
+                                    pixels_size as _,
+                                ))?;
+                                data.set_len(headers_len + pixels_size as usize);
+                            }
+                            // Swap colors to make BGRA format
+                            for i in data[headers_len..].chunks_exact_mut(4) {
+                                (i[0], i[2]) = (i[2], i[0]);
+                            }
+                            Ok(data)
+                        }()?,
+                        _ => return Err(FileSystemError::NotImplemented),
+                    })
+                }
+                _ => (),
+            }
+            break self.cache.read().unwrap();
+        };
+        // SAFETY: cache is already initialized
+        let data = unsafe { cache.as_ref().unwrap_unchecked() };
+
+        if offset as usize >= data.len() {
+            Ok(0)
+        } else {
+            let mut src = &data[offset as _..];
+            src.read(buffer)
+                .map(|x| x as _)
+                .map_err(|e| FileSystemError::Other(e.into()))
+        }
+    }
+    fn get_stat(&self) -> crate::fs_provider::FileSystemResult<FileStatInfo> {
+        let mut stat = self.entry.get_file_stat_info();
+        stat.size = get_obj_file_size(&self.entry.obj);
+        Ok(stat)
+    }
+    fn find_files_with_pattern(
+        &self,
+        _pattern: &dyn crate::fs_provider::FilePattern,
+        _filler: &mut dyn crate::fs_provider::FindFilesDataFiller,
+    ) -> FileSystemResult<()> {
+        Err(FileSystemError::NotADirectory)
     }
 }

@@ -70,6 +70,7 @@ struct ArchiveHandlerWithFiles<'a> {
     // NOTE: base_path is already combined with FsWithPath.path
     base_path: CaselessString,
     path: CaselessString,
+    file_name: CaselessString,
 }
 impl<'a> ArchiveHandlerWithFiles<'a> {
     unsafe fn new(
@@ -88,12 +89,20 @@ impl<'a> ArchiveHandlerWithFiles<'a> {
                 ref_count: 1,
             },
         );
+        // NOTE: filename is full path, while file_name is the last part of full path
+        let file_name = filename
+            .as_str()
+            .rsplit_once('\\')
+            .map(|x| x.1)
+            .unwrap_or(filename.as_str())
+            .into();
         Self {
             handler,
             dep_files: Mutex::new(dep_files),
             files: Mutex::new(BTreeMap::new()),
             base_path,
             path: filename,
+            file_name,
         }
     }
 }
@@ -438,7 +447,7 @@ impl<'a> ArchiveHandlerOpenContext<'a> {
     }
     pub fn get_file_name(&self) -> &'a str {
         let ctx = unsafe { self.ctx.as_ref() };
-        ctx.path.as_str()
+        ctx.file_name.as_str()
     }
     pub fn get_is_dir(&self) -> bool {
         self.is_dir
@@ -599,9 +608,14 @@ impl super::FileSystemHandler for ArchiveFsHandler {
                     let mut archive_with_files = unsafe {
                         Box::new(ArchiveHandlerWithFiles::new(
                             None,
+                            front_path
+                                .get_path()
+                                .rsplit_once('\\')
+                                .map(|x| x.0)
+                                .unwrap_or("")
+                                .into(),
                             front_path.get_path().into(),
-                            front_path.get_path().into(),
-                            unsafe { std::mem::transmute(raw_create_result.context) },
+                            std::mem::transmute(raw_create_result.context),
                             raw_create_result.is_dir,
                         ))
                     };
