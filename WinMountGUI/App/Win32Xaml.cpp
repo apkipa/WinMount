@@ -40,6 +40,17 @@
 
 // TODO: Use Win11 style caption buttions for Win11
 
+/* NOTE:
+*  Integrating with shell (in fullscreen / compat overlay mode) is almost impossible,
+*  because 1) shell hardcodes "ApplicationFrameWindow" class name; 2) shell and UWP
+*  host are tightly coupled via bidirectional RPC, and shell holds / regenerates
+*  IWinRTApplicationView. The only way to get UWP-like gestures & experiences is to:
+*  1) somehow trick shell into creating a stub UWP frame window, then construct our own
+*  Windows.UI.Core.CoreWindow and set it via CApplicationFrame::SetPresentedWindow, or
+*  2) pretend as the shell to interact with UWP host, then trigger a "crash" in shell to
+*  let it load our orphan UWP frame window.
+*/
+
 namespace util {
     namespace misc {
         // Similar to std::experimental::scope_exit
@@ -450,6 +461,13 @@ DECLARE_INTERFACE_IID_(ICoreApplicationViewTitleBarInternal, ::IInspectable, "6E
         STUB_DO_NOT_USE) PURE;
 };
 
+/*
+// NOTE: Use QueryWindowService to get an instance
+DECLARE_INTERFACE_IID_(IWindowServiceProxy, ::IUnknown, "CDAE3790-E890-4803-B2CF-0BAEEEDBFAF5") {
+    STDMETHOD(GetTargetWindow)(THIS_ HWND*) PURE;
+};
+*/
+
 struct bitmap_handle_traits {
     using type = HBITMAP;
     static void close(type value) noexcept {
@@ -633,6 +651,15 @@ namespace Win32Xaml {
             PreferredAppMode(WINAPI*)(PreferredAppMode appMode));
         Win32Xaml_dyn_proc_DefineEntry(SHCreateStreamOnModuleResourceW,
             HRESULT(WINAPI*)(HMODULE hModule, LPCWSTR pwszName, LPCWSTR pwszType, IStream** ppStream));
+        /*
+        Win32Xaml_dyn_proc_DefineEntry(RegisterWindowService,
+            HRESULT(WINAPI*)(HWND hwnd, REFIID iid, void* ptr));
+        // TODO: Should also take care of HresultFromKnownLastError
+        Win32Xaml_dyn_proc_DefineEntry(SetModernAppWindow,
+            BOOL(WINAPI*)(HWND hwnd_frame, HWND hwnd_app));
+        Win32Xaml_dyn_proc_DefineEntry(GetModernAppWindow,
+            HWND(WINAPI*)(HWND hwnd));
+        */
     }
 
     winrt::com_ptr<IWICImagingFactory> g_wic_factory;
@@ -671,9 +698,16 @@ void InitializeWin32Xaml(HINSTANCE hInstance) {
     g_hinst = hInstance;
 
     auto load_dyn_procs_fn = [] {
-        auto mod_uxtheme = GetModuleHandleW(L"uxtheme.dll");
-        auto mod_user32 = GetModuleHandleW(L"user32.dll");
-        auto mod_shcore = GetModuleHandleW(L"shcore.dll");
+        // WARN: If dll is not loaded, it will load and **leak** the dll
+        auto get_dll_fn = [](const wchar_t* name) {
+            auto dll = GetModuleHandleW(name);
+            if (!dll) { dll = LoadLibraryW(name); }
+            return dll;
+        };
+        auto mod_uxtheme = get_dll_fn(L"uxtheme.dll");
+        auto mod_user32 = get_dll_fn(L"user32.dll");
+        auto mod_shcore = get_dll_fn(L"shcore.dll");
+        //auto mod_twinapi = get_dll_fn(L"twinapi.dll");
 #if WIN32XAML_ENABLE_LAYOUT_SYNCHRONIZATION
         Win32Xaml_dyn_proc_AssignEntry_GPA(EnableResizeLayoutSynchronization,
             mod_user32, MAKEINTRESOURCEA(2615));
@@ -684,6 +718,14 @@ void InitializeWin32Xaml(HINSTANCE hInstance) {
             mod_uxtheme, MAKEINTRESOURCEA(135));
         Win32Xaml_dyn_proc_AssignEntry_GPA(SHCreateStreamOnModuleResourceW,
             mod_shcore, MAKEINTRESOURCEA(109));
+        /*
+        Win32Xaml_dyn_proc_AssignEntry_GPA(RegisterWindowService,
+            mod_twinapi, MAKEINTRESOURCEA(10));
+        Win32Xaml_dyn_proc_AssignEntry_GPA(SetModernAppWindow,
+            mod_user32, MAKEINTRESOURCEA(2568));
+        Win32Xaml_dyn_proc_AssignEntry_GPA(GetModernAppWindow,
+            mod_user32, MAKEINTRESOURCEA(2569));
+        */
 
         bool ok = true;
 #if WIN32XAML_ENABLE_LAYOUT_SYNCHRONIZATION
@@ -692,6 +734,11 @@ void InitializeWin32Xaml(HINSTANCE hInstance) {
 #endif
         ok = ok && SetPreferredAppMode;
         ok = ok && SHCreateStreamOnModuleResourceW;
+        /*
+        ok = ok && RegisterWindowService;
+        ok = ok && SetModernAppWindow;
+        ok = ok && GetModernAppWindow;
+        */
         if (!ok) {
             throw winrt::hresult_error(E_FAIL, L"Could not resolve all required dynamic procedures");
         }
@@ -948,6 +995,27 @@ namespace winrt::Win32Xaml::implementation {
         this->UpdateCaptionVisibility(false);
         this->CommitDComp();
 
+        // NOTE: Hide CoreWindow beforehand to avoid focus issues
+        auto core_wnd = Windows::UI::Core::CoreWindow::GetForCurrentThread();
+        check_hresult(core_wnd.as<ICoreWindowInterop>()->get_WindowHandle(&m_corewnd_hwnd));
+        if (m_is_main) {
+            t_main_window = get_strong();
+            // Prevent DesktopWindowXamlSource from appearing in taskbar on Windows 10
+            ShowWindow(m_corewnd_hwnd, SW_HIDE);
+            // Remove XAML emergency background
+            auto wp = Windows::UI::Xaml::Window::Current().as<IWindowPrivate>();
+            check_hresult(wp->put_TransparentBackground(true));
+        }
+        // Use our own emergency background
+        this->UseTransparentBackground(false);
+
+#if WIN32XAML_FIX_ACRYLIC_FIRST_ACTIVATION
+        // Fix acrylic brush not working on first activation
+        // NOTE: We need to ensure window is in activated state when system
+        //       samples window focus state during XAML Islands creation
+        ShowWindow(m_root_hwnd, SW_SHOW);
+#endif
+
         m_dwxs_n2 = m_dwxs.as<IDesktopWindowXamlSourceNative2>();
         check_hresult(m_dwxs_n2->AttachToWindow(m_root_hwnd));
         check_hresult(m_dwxs_n2->get_WindowHandle(&m_xaml_hwnd));
@@ -966,18 +1034,22 @@ namespace winrt::Win32Xaml::implementation {
 #else
         m_root_cp.TabFocusNavigation(Windows::UI::Xaml::Input::KeyboardNavigationMode::Cycle);
 #endif
-        auto core_wnd = Windows::UI::Core::CoreWindow::GetForCurrentThread();
-        check_hresult(core_wnd.as<ICoreWindowInterop>()->get_WindowHandle(&m_corewnd_hwnd));
-        if (m_is_main) {
-            t_main_window = get_strong();
-            // Prevent DesktopWindowXamlSource from appearing in taskbar on Windows 10
-            ShowWindow(m_corewnd_hwnd, SW_HIDE);
-            // Remove XAML emergency background
-            auto wp = Windows::UI::Xaml::Window::Current().as<IWindowPrivate>();
-            check_hresult(wp->put_TransparentBackground(true));
+        /*
+        {
+            struct WindowServiceProxy : implements<WindowServiceProxy, IWindowServiceProxy> {
+                WindowServiceProxy(HWND hwnd) : m_hwnd(hwnd) {}
+                HRESULT GetTargetWindow(HWND* out_hwnd) noexcept {
+                    *out_hwnd = m_hwnd;
+                    return S_OK;
+                }
+            private:
+                HWND m_hwnd;
+            };
+            auto wsp = make<WindowServiceProxy>(m_corewnd_hwnd);
+            check_hresult(RegisterWindowService(m_root_hwnd, guid_of<IWindowServiceProxy>(), wsp.get()));
+            //check_bool(SetModernAppWindow(m_root_hwnd, m_corewnd_hwnd) || GetModernAppWindow(m_root_hwnd) == m_corewnd_hwnd);
         }
-        // Use our own emergency background
-        this->UseTransparentBackground(false);
+        */
         m_dwxs.Content(m_root_cp);
         {
             auto monitor = MonitorFromWindow(m_root_hwnd, MONITOR_DEFAULTTONEAREST);
@@ -1003,6 +1075,10 @@ namespace winrt::Win32Xaml::implementation {
 #endif
 #endif
         m_title_bar->m_root_hwnd = m_root_hwnd;
+
+        // TODO: UI Automation fix
+        /*SetPropW(m_root_hwnd, L"UIA_WindowPatternEnabled", reinterpret_cast<HANDLE>(1));
+        SetPropW(m_root_hwnd, L"UIA_HasOwnNonClientUIATree", reinterpret_cast<HANDLE>(1));*/
 
         scope_root_hwnd.release();
         scope_windows.release();
@@ -1049,8 +1125,27 @@ namespace winrt::Win32Xaml::implementation {
         }
     }
     void Window::Activate() {
+#if WIN32XAML_FIX_ACRYLIC_FIRST_ACTIVATION
+        ShowWindow(m_xaml_hwnd, SW_SHOW);
+        // Fix focus not applying due to window activation order changes
+        SetFocus(m_xaml_hwnd);
+        {   // Fix mysterious issue where XAML window doesn't resize automatically
+            RECT rt_root;
+            GetClientRect(m_root_hwnd, &rt_root);
+            SetWindowPos(
+                m_xaml_hwnd,
+                nullptr,
+                0, 0, rt_root.right, rt_root.bottom,
+                SWP_NOMOVE | SWP_NOZORDER
+            );
+        }
+#else
         ShowWindow(m_root_hwnd, SW_SHOW);
         ShowWindow(m_xaml_hwnd, SW_SHOW);
+#endif
+
+        // Force XAML window & content to load with correct size
+        //SetWindowPos(m_root_hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED);
 
         [](auto that) -> fire_and_forget {
             using namespace std::literals;
@@ -1517,6 +1612,18 @@ namespace winrt::Win32Xaml::implementation {
                 auto ex_style = GetWindowLongPtr(m_xaml_hwnd, GWL_EXSTYLE);
                 SetWindowLongPtr(m_xaml_hwnd, GWL_EXSTYLE, ex_style & ~WS_EX_TRANSPARENT);
             }
+        }
+        else if (msg == WM_NCMOUSEMOVE) {
+            // Windows will still send WM_NCMOUSEMOVE when we already handled WM_NCPOINTER*,
+            // so we must handle this ancient message as well
+            // NOTE: We forward the requests to WM_NCPOINTERUPDATE
+            const bool is_lbutton_down = GetKeyState(VK_LBUTTON) & 0x8000;
+            const bool is_rbutton_down = GetKeyState(VK_RBUTTON) & 0x8000;
+            WPARAM wParam{};
+            wParam += is_lbutton_down ? POINTER_MESSAGE_FLAG_FIRSTBUTTON : 0;
+            wParam += is_rbutton_down ? POINTER_MESSAGE_FLAG_SECONDBUTTON : 0;
+            wParam <<= 16;
+            return this->WindowProc(hwnd, WM_NCPOINTERUPDATE, wParam, lParam);
         }
         else if (msg == WM_GETOBJECT) {
             if (!m_should_remove_title) { return DefWindowProcW(hwnd, msg, wParam, lParam); }
@@ -2132,7 +2239,7 @@ namespace winrt::Win32Xaml::implementation {
         rt.top = this->GetClientTopPadding();
         // TODO: Double check whether this is exact UWP metrics
         SIZE sz_caption_btn{
-            MulDiv(CAPTION_BUTTON_WIDTH, m_dpi, 96) - 1, MulDiv(CAPTION_BUTTON_HEIGHT, m_dpi, 96)
+            CAPTION_BUTTON_WIDTH * m_dpi / 96, CAPTION_BUTTON_HEIGHT * m_dpi / 96
         };
         check_hresult(m_v_caption_buttons->SetOffsetX(static_cast<float>(rt.right - sz_caption_btn.cx * 3)));
         check_hresult(m_v_caption_buttons->SetOffsetY(static_cast<float>(rt.top)));
