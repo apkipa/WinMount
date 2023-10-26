@@ -79,6 +79,20 @@ unsafe fn file_from_dokan_file_info<'f>(
     assert!(dokan_file_info.Context != 0);
     unsafe { &*(dokan_file_info.Context as *const _) }
 }
+fn obj_key_from_dokan_file_info(dokan_file_info: &DOKAN_FILE_INFO) -> u64 {
+    dokan_file_info.Context
+}
+fn obj_info_from_dokan_file_info(dokan_file_info: &DOKAN_FILE_INFO) -> super::DokanOpenObjInfo {
+    let server = server_from_dokan_file_info(dokan_file_info);
+    server.get_open_obj_info(obj_key_from_dokan_file_info(dokan_file_info))
+}
+fn update_obj_info_from_dokan_file_info(
+    dokan_file_info: &DOKAN_FILE_INFO,
+    obj_info: super::DokanOpenObjInfo,
+) {
+    let server = server_from_dokan_file_info(dokan_file_info);
+    server.update_open_obj_info(obj_key_from_dokan_file_info(dokan_file_info), obj_info);
+}
 
 fn set_file_into_dokan_file_info(file: OwnedFile, dokan_file_info: &mut DOKAN_FILE_INFO) {
     drop_file_from_dokan_file_info(dokan_file_info);
@@ -202,6 +216,12 @@ pub(super) extern "stdcall" fn create_file(
         )?;
         dokan_file_info.IsDirectory = result.is_dir.into();
         set_file_into_dokan_file_info(result.context, dokan_file_info);
+        if create_options.contains(FileCreateOptions::DeleteOnClose) {
+            let obj_info = super::DokanOpenObjInfo {
+                pending_delete: true,
+            };
+            update_obj_info_from_dokan_file_info(dokan_file_info, obj_info);
+        }
         if (raw_create_disposition == FILE_CREATE
             || raw_create_disposition == FILE_OPEN_IF
             || raw_create_disposition == FILE_OVERWRITE_IF
@@ -216,14 +236,23 @@ pub(super) extern "stdcall" fn create_file(
 }
 
 pub(super) extern "stdcall" fn cleanup(file_name: LPCWSTR, dokan_file_info: PDOKAN_FILE_INFO) {
-    wrap_unit_ffi(|| {
+    wrap_unit_ffi(|| unsafe {
         if log::log_enabled!(log::Level::Trace) {
-            let file_name = unsafe { U16CStr::from_ptr_str(file_name) };
+            let file_name = U16CStr::from_ptr_str(file_name);
             log::trace!("Cleaning up object `{}`", file_name.to_string_lossy());
         }
 
-        let dokan_file_info = unsafe { &mut *dokan_file_info };
-        if dokan_file_info.DeleteOnClose != 0 {
+        let dokan_file_info = &mut *dokan_file_info;
+        let open_obj_info = obj_info_from_dokan_file_info(dokan_file_info);
+        let final_set_delete = dokan_file_info.DeleteOnClose != 0;
+        if open_obj_info.pending_delete != final_set_delete {
+            // log::trace!("Set delete: {final_set_delete}");
+            let file = file_from_dokan_file_info(dokan_file_info);
+            if let Err(e) = file.set_delete(final_set_delete) {
+                log::error!("Final set_delete({final_set_delete}) failed: {e}");
+            }
+        }
+        if final_set_delete {
             drop_file_from_dokan_file_info(dokan_file_info);
         }
     })
@@ -455,6 +484,10 @@ pub(super) extern "stdcall" fn delete_file(
         let dokan_file_info = &mut *dokan_file_info;
         let file = file_from_dokan_file_info(dokan_file_info);
         file.set_delete(true)?;
+        let obj_info = super::DokanOpenObjInfo {
+            pending_delete: true,
+        };
+        update_obj_info_from_dokan_file_info(dokan_file_info, obj_info);
         Ok(())
     })
 }
@@ -467,6 +500,10 @@ pub(super) extern "stdcall" fn delete_directory(
         let dokan_file_info = &mut *dokan_file_info;
         let file = file_from_dokan_file_info(dokan_file_info);
         file.set_delete(true)?;
+        let obj_info = super::DokanOpenObjInfo {
+            pending_delete: true,
+        };
+        update_obj_info_from_dokan_file_info(dokan_file_info, obj_info);
         Ok(())
     })
 }

@@ -83,13 +83,18 @@ static mut OPERATIONS: DOKAN_OPERATIONS = DOKAN_OPERATIONS {
     FindStreams: None,
 };
 
+#[derive(Debug, Clone, Copy)]
+struct DokanOpenObjInfo {
+    pending_delete: bool,
+}
+
 // TODO: Consider pinning the struct due to Dokan requirements
 struct DokanFServer {
     handle: DOKAN_HANDLE,
     shutdown_flag: AtomicU32,
     fs: Arc<dyn FileSystemHandler>,
     dokan_options: MaybeUninit<DOKAN_OPTIONS>,
-    open_objs: scc::HashSet<u64>,
+    open_objs: scc::HashMap<u64, DokanOpenObjInfo>,
     block_sys_dirs: bool,
     pin: PhantomPinned,
 }
@@ -106,7 +111,7 @@ impl DokanFServer {
             shutdown_flag: AtomicU32::new(0),
             fs,
             dokan_options: MaybeUninit::uninit(),
-            open_objs: scc::HashSet::new(),
+            open_objs: scc::HashMap::new(),
             block_sys_dirs: !config.enable_sys_dirs,
             pin: PhantomPinned,
         });
@@ -155,8 +160,11 @@ impl DokanFServer {
         Box::<crate::fs_provider::OwnedFile<'f>>::from_raw(file as _)
     }
     fn add_open_obj_ptr(&self, obj: u64) {
+        let obj_info = DokanOpenObjInfo {
+            pending_delete: false,
+        };
         self.open_objs
-            .insert(obj)
+            .insert(obj, obj_info)
             .expect("duplicate open objects must not exist");
     }
     // NOTE: Removes entries WITHOUT dropping
@@ -167,10 +175,20 @@ impl DokanFServer {
     }
     fn drop_open_objs(&mut self) {
         // SAFETY: Files are uniquely returned since we have exclusive access
-        self.open_objs.retain(|&k| {
+        self.open_objs.retain(|&k, _| {
             let _ = unsafe { Self::u64_to_owned_file(k) };
             false
         });
+    }
+    fn update_open_obj_info(&self, obj: u64, obj_info: DokanOpenObjInfo) {
+        self.open_objs
+            .update(&obj, |_, v| *v = obj_info)
+            .expect("object must exist in open objects list");
+    }
+    fn get_open_obj_info(&self, obj: u64) -> DokanOpenObjInfo {
+        self.open_objs
+            .read(&obj, |_, v| *v)
+            .expect("object must exist in open objects list")
     }
 }
 
