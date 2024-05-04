@@ -1357,33 +1357,7 @@ namespace util {
 
             template<typename T>
             void set_completed_handler_for_async(T&& async) {
-                struct disconnect_aware_handler {
-                    disconnect_aware_handler(std::shared_ptr<data> data) : m_data(std::move(data)) {}
-                    ~disconnect_aware_handler() {
-                        if (m_data) {
-                            (*this)(std::decay_t<T>{}, ::winrt::Windows::Foundation::AsyncStatus::Error);
-                        }
-                    }
-                    void operator()(auto&& sender, ::winrt::Windows::Foundation::AsyncStatus status) {
-                        if (status == ::winrt::Windows::Foundation::AsyncStatus::Started) { return; }
-                        std::vector<std::coroutine_handle<>> co_resumes;
-                        {
-                            std::scoped_lock guard{ m_data->lock };
-                            // Check if current async owns the m_data
-                            if (sender == m_data->async) {
-                                // NOTE: Coroutine is not freed if IAsyncInfo is still alive
-                                m_data->async = nullptr;
-
-                                co_resumes.swap(m_data->co_resumes);
-                            }
-                        }
-                        m_data = nullptr;
-                        for (auto resume : co_resumes) { resume(); }
-                    }
-                private:
-                    std::shared_ptr<data> m_data;
-                };
-                async.Completed(disconnect_aware_handler{ m_data });
+                async.Completed(disconnect_aware_handler<T>{ m_data });
             }
 
             struct data {
@@ -1393,6 +1367,34 @@ namespace util {
             };
             std::shared_ptr<data> m_data;
             std::mutex m_method_lock;
+
+            template<typename T>
+            struct disconnect_aware_handler {
+                disconnect_aware_handler(std::shared_ptr<data> data) : m_data(std::move(data)) {}
+                ~disconnect_aware_handler() {
+                    if (m_data) {
+                        (*this)(std::decay_t<T>{}, ::winrt::Windows::Foundation::AsyncStatus::Error);
+                    }
+                }
+                void operator()(auto&& sender, ::winrt::Windows::Foundation::AsyncStatus status) {
+                    if (status == ::winrt::Windows::Foundation::AsyncStatus::Started) { return; }
+                    std::vector<std::coroutine_handle<>> co_resumes;
+                    {
+                        std::scoped_lock guard{ m_data->lock };
+                        // Check if current async owns the m_data
+                        if (sender == m_data->async) {
+                            // NOTE: Coroutine is not freed if IAsyncInfo is still alive
+                            m_data->async = nullptr;
+
+                            co_resumes.swap(m_data->co_resumes);
+                        }
+                    }
+                    m_data = nullptr;
+                    for (auto resume : co_resumes) { resume(); }
+                }
+            private:
+                std::shared_ptr<data> m_data;
+            };
         };
 
         // A simplified version for single-instance execution

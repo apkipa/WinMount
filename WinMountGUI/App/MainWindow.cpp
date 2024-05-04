@@ -6,6 +6,7 @@
 #include "Pages\MainPage.h"
 #include "Pages\DaemonManagePage.h"
 #include "util.hpp"
+#include <winrt/Tenkai.UI.ViewManagement.h>
 
 using namespace winrt;
 using namespace Windows::UI::Xaml;
@@ -19,7 +20,7 @@ namespace winrt::WinMount::App::implementation {
         {   // Update title bar button colors
             using Windows::UI::Color;
             using Windows::UI::Colors;
-            auto tb = this->TitleBar();
+            auto tb = this->View().TitleBar();
             Color bg_normal_clr, bg_hover_clr, bg_pressed_clr;
             bg_normal_clr = Colors::Transparent();
             bg_hover_clr = Windows::UI::ColorHelper::FromArgb(0x19, 0, 0, 0);

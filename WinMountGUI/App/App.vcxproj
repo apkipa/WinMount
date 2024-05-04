@@ -211,7 +211,6 @@
     <ClInclude Include="Pages\MainPage.h">
       <DependentUpon>Pages\MainPage.xaml</DependentUpon>
     </ClInclude>
-    <ClInclude Include="Win32Xaml.h" />
   </ItemGroup>
   <ItemGroup>
     <ApplicationDefinition Include="App.xaml">
@@ -285,7 +284,6 @@
       <DependentUpon>Pages\MainPage.xaml</DependentUpon>
     </ClCompile>
     <ClCompile Include="$(GeneratedFilesDir)module.g.cpp" />
-    <ClCompile Include="Win32Xaml.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Midl Include="App.idl">
@@ -323,7 +321,6 @@
       <DependentUpon>Pages\MainSettingsPage.xaml</DependentUpon>
       <SubType>Code</SubType>
     </Midl>
-    <Midl Include="Win32Xaml.idl" />
   </ItemGroup>
   <ItemGroup>
     <None Include="dummy.exe">
@@ -342,6 +339,7 @@
     <Import Project="..\packages\Microsoft.Windows.CppWinRT.2.0.220531.1\build\native\Microsoft.Windows.CppWinRT.targets" Condition="Exists('..\packages\Microsoft.Windows.CppWinRT.2.0.220531.1\build\native\Microsoft.Windows.CppWinRT.targets')" />
     <Import Project="..\packages\Microsoft.Web.WebView2.1.0.1264.42\build\native\Microsoft.Web.WebView2.targets" Condition="Exists('..\packages\Microsoft.Web.WebView2.1.0.1264.42\build\native\Microsoft.Web.WebView2.targets')" />
     <Import Project="..\packages\Microsoft.UI.Xaml.2.8.2-prerelease.220830001\build\native\Microsoft.UI.Xaml.targets" Condition="Exists('..\packages\Microsoft.UI.Xaml.2.8.2-prerelease.220830001\build\native\Microsoft.UI.Xaml.targets')" />
+    <Import Project="..\packages\Tenkai.UWP.0.1.1-alpha\build\native\Tenkai.UWP.targets" Condition="Exists('..\packages\Tenkai.UWP.0.1.1-alpha\build\native\Tenkai.UWP.targets')" />
   </ImportGroup>
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
     <PropertyGroup>
@@ -352,5 +350,6 @@
     <Error Condition="!Exists('..\packages\Microsoft.Web.WebView2.1.0.1264.42\build\native\Microsoft.Web.WebView2.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.Web.WebView2.1.0.1264.42\build\native\Microsoft.Web.WebView2.targets'))" />
     <Error Condition="!Exists('..\packages\Microsoft.UI.Xaml.2.8.2-prerelease.220830001\build\native\Microsoft.UI.Xaml.props')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.UI.Xaml.2.8.2-prerelease.220830001\build\native\Microsoft.UI.Xaml.props'))" />
     <Error Condition="!Exists('..\packages\Microsoft.UI.Xaml.2.8.2-prerelease.220830001\build\native\Microsoft.UI.Xaml.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.UI.Xaml.2.8.2-prerelease.220830001\build\native\Microsoft.UI.Xaml.targets'))" />
+    <Error Condition="!Exists('..\packages\Tenkai.UWP.0.1.1-alpha\build\native\Tenkai.UWP.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Tenkai.UWP.0.1.1-alpha\build\native\Tenkai.UWP.targets'))" />
   </Target>
 </Project>

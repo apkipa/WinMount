@@ -29,7 +29,6 @@
   </ItemGroup>
   <ItemGroup>
     <Midl Include="App.idl" />
-    <Midl Include="Win32Xaml.idl" />
     <Midl Include="Items\Items.idl">
       <Filter>Items</Filter>
     </Midl>
@@ -39,7 +38,6 @@
     <ClCompile Include="App.cpp" />
     <ClCompile Include="$(GeneratedFilesDir)module.g.cpp" />
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="Win32Xaml.cpp" />
     <ClCompile Include="Code\WinMountClient.cpp">
       <Filter>Code</Filter>
     </ClCompile>
@@ -52,7 +50,6 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />
-    <ClInclude Include="Win32Xaml.h" />
     <ClInclude Include="Code\WinMountClient.hpp">
       <Filter>Code</Filter>
     </ClInclude>

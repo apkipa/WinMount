@@ -2,7 +2,6 @@
 
 #include "App.h"
 #include "App.g.cpp"
-#include "Win32Xaml.h"
 #include "MainWindow.h"
 
 using namespace winrt;

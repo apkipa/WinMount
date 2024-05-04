@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include "Win32Xaml.h"
+#include <winrt/Tenkai.UI.Xaml.h>
 #include "MainWindow.g.h"
 
 namespace winrt::WinMount::App::implementation {
